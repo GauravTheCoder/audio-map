@@ -110,12 +110,12 @@
               <tr><td>Slash (hold)</td><td>Brake</td></tr>
               <tr><td>Left / Right arrow</td><td>Turn 1 degree; hold to keep turning</td></tr>
               <tr><td>Shift + Left / Right</td><td>Turn 10 degrees; hold to turn faster</td></tr>
-              <tr><td>Control + Left / Right</td><td>Turn onto the next road in that direction</td></tr>
-              <tr><td>R</td><td>Align with the current road</td></tr>
+              <tr><td>Control + Left / Right</td><td>Turn onto the next road in that direction. At a roundabout: turn in, then take the exit you are at</td></tr>
+              <tr><td>R</td><td>Align with the road (following a bend), saying how far you turned and how much more the road bends</td></tr>
               <tr><td>H</td><td>Heading</td></tr>
               <tr><td>S</td><td>Speed</td></tr>
               <tr><td>L</td><td>Location: street, nearest cross street, area</td></tr>
-              <tr><td>N</td><td>Next intersection along the road: full description the first time, then just the remaining distance (use it as a countdown)</td></tr>
+              <tr><td>N</td><td>Next intersection along the road: full description the first time, then just the remaining distance (use it as a countdown). In a roundabout: the next exit</td></tr>
               <tr><td>Shift + N</td><td>The last intersection behind you</td></tr>
               <tr><td>Period / Comma</td><td>Step forward / back through the intersections down the road; N returns to the nearest</td></tr>
               <tr><td>Shift + B</td><td>Toggle intersection proximity beeps</td></tr>
@@ -131,7 +131,7 @@
               <tr><td>G</td><td>Destination distance and direction</td></tr>
               <tr><td>Backspace</td><td>Clear destination</td></tr>
               <tr><td>1 to 4</td><td>Walker, bicycle, car, helicopter</td></tr>
-              <tr><td>A</td><td>Toggle road assist (lane keeping)</td></tr>
+              <tr><td>A</td><td>Toggle road assist (lane keeping: follows bends and goes round roundabouts; you make the turns)</td></tr>
               <tr><td>P</td><td>Toggle place announcements</td></tr>
               <tr><td>M</td><td>Toggle map rotation</td></tr>
               <tr><td>[ and ]</td><td>Review previous / next spoken messages</td></tr>
@@ -156,6 +156,8 @@
             <li>Place sounds come from the direction of the place: cup clink for food, two-tone chime for transport, bell for culture, water drop for parks, plain tone for shops and services.</li>
             <li>Beacon ping: your destination. Left or right in your headphones shows which side it is on; pitch shows ahead (high) or behind (low). A second, higher note means you are heading straight at it. It repeats faster as you get closer. With turn-by-turn on, the beacon points a little way along the route, so following it follows the streets.</li>
             <li>Rising two notes on one side: your turn is just ahead, toward that side. The ding-dong bell marks the intersection itself.</li>
+            <li>Bends: the road's bends are announced ahead with their direction and size, e.g. "Road bends right in 40 metres, about 60 degrees". With road assist off, the rising two notes play on that side as the bend begins.</li>
+            <li>Roundabouts: on the approach you hear every exit in order and where it leads ("second North Road, straight on"). Inside, each exit is called out as it comes up ("Exit 2, North Road, on your right") and the ding-dong bell plays at it, with a ping from the exit's direction: that is the moment to turn off.</li>
           </ul>
           <p class="hint">Headphones recommended. Map data © OpenStreetMap contributors.</p>
         </section>

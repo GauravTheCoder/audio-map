@@ -17,6 +17,8 @@ export interface Way {
   oneway: boolean;
   /** the permitted direction is against the order of the way's nodes (oneway=-1) */
   onewayReverse: boolean;
+  /** part of a roundabout's ring */
+  roundabout: boolean;
 }
 
 export interface Edge {
@@ -177,10 +179,11 @@ export class World {
       const t = rw.tags;
       const type = t.highway;
       const nm = t.name ?? t.ref;
+      const roundabout = t.junction === 'roundabout' || t.junction === 'circular';
       const way: Way = {
         id: rw.id,
         type,
-        name: nm ?? TYPE_NAMES[type] ?? 'unnamed road',
+        name: nm ?? (roundabout ? 'roundabout' : TYPE_NAMES[type] ?? 'unnamed road'),
         named: !!nm,
         service: t.service,
         surface: t.surface,
@@ -188,6 +191,7 @@ export class World {
         tunnel: !!t.tunnel && t.tunnel !== 'no',
         oneway: t.oneway === 'yes' || t.oneway === '1' || t.oneway === '-1' || (t.junction === 'roundabout' && t.oneway !== 'no'),
         onewayReverse: t.oneway === '-1',
+        roundabout,
       };
       this.ways.push(way);
 
@@ -350,19 +354,7 @@ export class World {
     for (let guard = 0; guard < 5000 && d <= maxDist; guard++) {
       trail.push(cur);
       if (isStop(cur)) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: false, arriveName };
-      const heading = bearing(prev.x, prev.y, cur.x, cur.y);
-      let best: { node: GNode; way: Way } | null = null;
-      let bestScore = Infinity;
-      for (const e of cur.edges) {
-        if (e.to === prev.id || !canUse(e.way)) continue;
-        const nn = this.nodes.get(e.to)!;
-        const turn = Math.abs(relAngle(heading, bearing(cur.x, cur.y, nn.x, nn.y)));
-        const score = turn + (e.way.name === name ? 0 : 45);
-        if (score < bestScore) {
-          bestScore = score;
-          best = { node: nn, way: e.way };
-        }
-      }
+      const best = this.continuation(prev, cur, name, canUse);
       if (!best) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: true, arriveName };
       d += dist(cur.x, cur.y, best.node.x, best.node.y);
       arriveName = best.way.name;
@@ -370,6 +362,96 @@ export class World {
       cur = best.node;
     }
     return null;
+  }
+
+  /** The way on from prev→cur: same street name first, then the straightest. */
+  private continuation(prev: GNode, cur: GNode, name: string, canUse: (w: Way) => boolean): { node: GNode; way: Way } | null {
+    const heading = bearing(prev.x, prev.y, cur.x, cur.y);
+    let best: { node: GNode; way: Way } | null = null;
+    let bestScore = Infinity;
+    for (const e of cur.edges) {
+      if (e.to === prev.id || !canUse(e.way)) continue;
+      const nn = this.nodes.get(e.to)!;
+      const turn = Math.abs(relAngle(heading, bearing(cur.x, cur.y, nn.x, nn.y)));
+      const score = turn + (e.way.name === name ? 0 : 45);
+      if (score < bestScore) {
+        bestScore = score;
+        best = { node: nn, way: e.way };
+      }
+    }
+    return best;
+  }
+
+  /**
+   * The line of the road ahead, starting at (x, y) on segment prev→cur, as far as maxDist or the
+   * first node where isStop() holds (included). d is the distance along the road from (x, y).
+   */
+  roadLine(
+    x: number,
+    y: number,
+    prev: GNode,
+    cur: GNode,
+    name: string,
+    canUse: (w: Way) => boolean,
+    isStop: (n: GNode) => boolean,
+    maxDist: number,
+  ): { pts: { x: number; y: number; d: number }[]; stopped: boolean } {
+    const pts = [{ x, y, d: 0 }];
+    let d = 0;
+    for (let guard = 0; guard < 2000; guard++) {
+      const last = pts[pts.length - 1];
+      d += dist(last.x, last.y, cur.x, cur.y);
+      pts.push({ x: cur.x, y: cur.y, d });
+      if (isStop(cur)) return { pts, stopped: true };
+      if (d >= maxDist) break;
+      const next = this.continuation(prev, cur, name, canUse);
+      if (!next) break;
+      prev = cur;
+      cur = next.node;
+    }
+    return { pts, stopped: false };
+  }
+
+  /** Is this node on a roundabout's ring? */
+  onRing(n: GNode): boolean {
+    return n.edges.some((e) => e.way.roundabout);
+  }
+
+  /** The ring through n, in the direction traffic flows, starting at n. Closed tells whether it came back round. */
+  ring(n: GNode): { nodes: GNode[]; closed: boolean } {
+    const nodes = [n];
+    const seen = new Set([n.id]);
+    let cur = n;
+    for (let guard = 0; guard < 500; guard++) {
+      const e = cur.edges.find((x) => x.way.roundabout && (x.way.oneway ? x.fwd !== x.way.onewayReverse : x.fwd));
+      if (!e) break;
+      if (e.to === n.id) return { nodes, closed: true };
+      if (seen.has(e.to)) break;
+      cur = this.nodes.get(e.to)!;
+      seen.add(cur.id);
+      nodes.push(cur);
+    }
+    return { nodes, closed: false };
+  }
+
+  /**
+   * Exits from a roundabout, in the order you reach them going round from the entry node (the
+   * entry node's own exits, i.e. back the way you came, last). Paths and driveways are not counted,
+   * nor roads that only lead in.
+   */
+  ringExits(entry: GNode, canUse: (w: Way) => boolean): { nodes: GNode[]; exits: { node: GNode; edge: Edge }[]; clockwise: boolean } {
+    const { nodes, closed } = this.ring(entry);
+    const order = closed ? [...nodes.slice(1), nodes[0]] : nodes.slice(1);
+    const exits: { node: GNode; edge: Edge }[] = [];
+    for (const n of order) for (const e of n.edges) if (isRingExit(e, canUse)) exits.push({ node: n, edge: e });
+    // shoelace: positive area = anticlockwise (x east, y north)
+    let area = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      const b = nodes[(i + 1) % nodes.length];
+      area += a.x * b.y - b.x * a.y;
+    }
+    return { nodes, exits, clockwise: area < 0 };
   }
 
   /** Bearing leaving node n along edge e, measured over ~15 m so short kinks don't mislead. */
@@ -388,6 +470,16 @@ export class World {
     }
     return bearing(n.x, n.y, cur.x, cur.y);
   }
+}
+
+const MINOR = new Set(['footway', 'path', 'steps', 'cycleway', 'track', 'pedestrian', 'bridleway', 'corridor']);
+
+/** A road leaving a roundabout that counts as one of its exits. */
+export function isRingExit(e: Edge, canUse: (w: Way) => boolean): boolean {
+  const w = e.way;
+  if (w.roundabout || !canUse(w) || MINOR.has(w.type)) return false;
+  if (w.type === 'service' && !w.named) return false;
+  return !w.oneway || e.fwd !== w.onewayReverse; // a one-way road into the roundabout is not an exit
 }
 
 /** Direction of travel over roughly the last 15 m of a path. */

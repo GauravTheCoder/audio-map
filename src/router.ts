@@ -1,7 +1,7 @@
 // Turn-by-turn routing on the loaded road graph (A*), and turning the path into manoeuvres.
 
 import { bearing, dist, relAngle } from './geo';
-import type { GNode, Way, World } from './world';
+import { isRingExit, type GNode, type Way, type World } from './world';
 
 export interface RoutePoint {
   x: number;
@@ -186,6 +186,23 @@ function maneuvers(path: GNode[], points: RoutePoint[], ways: (Way | null)[], o:
     const inWay = ways[k];
     const outWay = ways[k + 1];
     if (!inWay || !outWay) continue;
+    if (outWay.roundabout && !inWay.roundabout) {
+      // entering a roundabout: one instruction, counting the exits passed on the way round
+      let exits = 0;
+      let kx = k + 1;
+      for (; kx < path.length && ways[kx + 1]?.roundabout; kx++) {
+        exits += path[kx - 1].edges.filter((e) => isRingExit(e, o.canUse)).length;
+      }
+      const exitWay = ways[kx + 1];
+      if (exitWay) {
+        const rel = relAngle(routeBearing(points, k, -1), routeBearing(points, kx, 1));
+        const p = points[k];
+        out.push({ x: p.x, y: p.y, d: p.d, rel, kind: 'roundabout', exit: exits + 1, onto: exitWay.name, ontoNamed: exitWay.named, inName: inWay.name, kStart: k });
+        k = kx; // carry on from the exit
+        continue;
+      }
+    }
+    if (inWay.roundabout && outWay.roundabout) continue; // going round
     const rel = relAngle(routeBearing(points, k, -1), routeBearing(points, k, 1));
     const choice = node.edges.filter((e) => o.canUse(e.way)).length >= 3;
     if (!choice && Math.abs(rel) < 60) continue; // the road just curves
@@ -195,7 +212,7 @@ function maneuvers(path: GNode[], points: RoutePoint[], ways: (Way | null)[], o:
     // one manoeuvre, measured once from before the first point to after the last. Adding the two
     // angles would count the same turn twice, since each is measured over a 15 m window.
     const last = out[out.length - 1];
-    if (last && m.d - last.d < 15) {
+    if (last && last.kind !== 'roundabout' && m.d - last.d < 15) {
       out.pop();
       const r = relAngle(routeBearing(points, last.kStart, -1), routeBearing(points, k, 1));
       m = { ...m, rel: r, kind: classify(r, false), inName: last.inName, kStart: last.kStart };
@@ -216,13 +233,17 @@ export function maneuverText(m: Maneuver, destName: string): string {
   if (m.kind === 'arrive') return `arrive at ${destName}${Math.abs(m.rel) >= 25 ? `, on your ${side}` : ''}`;
   if (m.kind === 'u-turn') return 'make a U-turn';
   const onto = m.ontoNamed ? m.onto : `the ${m.onto}`;
-  if (m.kind === 'roundabout') return `at the roundabout, take the ${ordinal(m.exit ?? 1)} exit onto ${onto}`;
+  if (m.kind === 'roundabout') {
+    const a = Math.abs(m.rel);
+    const way = a < 30 ? 'straight on' : a >= 150 ? 'back the way you came' : `to the ${side}`;
+    return `at the roundabout, take the ${ordinal(m.exit ?? 1)} exit, ${way}, onto ${onto}`;
+  }
   if (m.kind === 'continue') return `continue onto ${onto}`;
   const verb = m.kind === 'bear' ? 'bear' : m.kind === 'sharp' ? 'turn sharp' : 'turn';
   return `${verb} ${side} onto ${onto}`;
 }
 
-function ordinal(n: number): string {
+export function ordinal(n: number): string {
   return ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'][n - 1] ?? `number ${n}`;
 }
 
