@@ -40,7 +40,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const CACHE_NAME = 'audio-map-overpass-v1';
 const CACHE_MAX_AGE_MS = 14 * 24 * 3600 * 1000;
 
-const HIGHWAYS =
+export const HIGHWAYS =
   'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
   'tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|' +
   'footway|path|cycleway|steps|track';
@@ -65,8 +65,30 @@ interface OverpassEl {
 }
 
 export async function fetchRoads(center: LatLon, radius: number, signal: AbortSignal, onRetry?: RetryNotice): Promise<RawRoads> {
-  const q = `[out:json][timeout:50][bbox:${bbox(center, radius)}];
-way["highway"~"^(${HIGHWAYS})$"]->.roads;
+  return queryRoads(bbox(center, radius), HIGHWAYS, signal, onRetry);
+}
+
+/**
+ * Roads inside a rectangle, e.g. the corridor between the traveller and a distant destination.
+ * `types` limits the road types ("primary|residential|…") to keep large areas small.
+ */
+export async function fetchRoadsBox(
+  south: number,
+  west: number,
+  north: number,
+  east: number,
+  types: string,
+  signal: AbortSignal,
+  onRetry?: RetryNotice,
+): Promise<RawRoads> {
+  // round outward to ~100 m so similar requests share a cache entry
+  const box = [Math.floor(south * 1000) / 1000, Math.floor(west * 1000) / 1000, Math.ceil(north * 1000) / 1000, Math.ceil(east * 1000) / 1000];
+  return queryRoads(box.map((v) => v.toFixed(3)).join(','), types, signal, onRetry);
+}
+
+async function queryRoads(box: string, types: string, signal: AbortSignal, onRetry?: RetryNotice): Promise<RawRoads> {
+  const q = `[out:json][timeout:90][bbox:${box}];
+way["highway"~"^(${types})$"]->.roads;
 .roads out body qt;
 .roads >;
 out skel qt;`;

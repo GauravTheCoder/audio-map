@@ -3,17 +3,33 @@
 import { AudioEngine } from './audio/audio';
 import { Input, type Command } from './input';
 import { MapView } from './mapview';
-import { fetchPlaces, fetchRoads, reverseGeocode } from './osm';
+import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode } from './osm';
 import { Projection, bearing as bearingTo, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
 import { Speech } from './speech';
-import { maneuverText, planRoute, pointAlong, type Route, type RouteOptions } from './router';
+import { maneuverText, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
+import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
 import { World, type Edge, type GNode, type Junction, type Place, type Way } from './world';
 
 const STEP = 1 / 60;
 /** distances (m) at which progress toward the destination is spoken */
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
+
+const CAR_ROADS =
+  'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
+  'tertiary|tertiary_link|unclassified|residential|living_street';
+
+/**
+ * For destinations beyond the loaded map, the streets between here and there are loaded for routing.
+ * Furthest straight-line distance (m) for which that is attempted, and the road types fetched.
+ */
+const CORRIDOR: Record<VehicleId, { max: number; types: string }> = {
+  walker: { max: 5000, types: HIGHWAYS },
+  bicycle: { max: 10000, types: HIGHWAYS.replace('motorway|motorway_link|', '') },
+  car: { max: 15000, types: CAR_ROADS },
+  helicopter: { max: 0, types: '' },
+};
 const ROUGH = new Set(['gravel', 'dirt', 'unpaved', 'ground', 'grass', 'sand', 'cobblestone', 'sett', 'compacted', 'fine_gravel', 'mud', 'pebblestone', 'wood']);
 
 export interface Hud {
@@ -125,6 +141,15 @@ export class Game {
   private offRouteSince = -1;
   private lastRouteCalc = -1e9;
   private nextRouteCheck = 0;
+  private lastIPress = 0;
+  /** streets loaded between the traveller and a distant destination, used only for routing */
+  private routeWorld: { world: World; vehicle: VehicleId; minX: number; minY: number; maxX: number; maxY: number } | null = null;
+  private corridorAbort: AbortController | null = null;
+  private corridorLoading = false;
+  private routeTooFar = false;
+  /** id of the latest route request, so slower earlier answers are ignored */
+  private routeReq = 0;
+  private routePending = false;
   private destMilestone = Infinity;
   private browse: { list: Place[]; idx: number; x: number; y: number } | null = null;
 
@@ -166,6 +191,7 @@ export class Game {
     this.inJunction = null;
     this.lastN = null;
     this.stepCursor = null;
+    this.dropCorridor();
     this.clearRoute();
     this.map.resetTrail();
     this.map.setDestination(null);
@@ -263,7 +289,7 @@ export class Game {
       }
 
       this.world = world;
-      if (this.dest && this.settings.turnByTurn && (!this.route || this.route.partial)) this.computeRoute(false);
+      if (this.dest && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
       this.loadCenter = at;
       const area = await areaP;
       if (area) {
@@ -327,7 +353,7 @@ export class Game {
     this.speed = Math.min(this.speed, this.vehicle.maxSpeed);
     this.audio.setVehicle(id);
     if (this.dest && this.world) {
-      if (this.settings.turnByTurn && id !== 'helicopter') this.computeRoute(announce);
+      if (this.settings.turnByTurn && id !== 'helicopter') void this.computeRoute(announce);
       else this.clearRoute();
     }
     this.announcedNodes.clear();
@@ -438,9 +464,27 @@ export class Game {
    * its centre. Gives up when the traveller deliberately points more than 20° away from the road.
    */
   private assist(dt: number) {
-    if (!this.onRoad || !this.road || this.speed < 0.5 || this.vehicle.id === 'helicopter') return;
+    if (this.speed < 0.5 || this.vehicle.id === 'helicopter') return;
     if (this.input.isDown('ArrowLeft') || this.input.isDown('ArrowRight')) return;
     if (this.clock - this.lastManualTurn < 1.5) return;
+    const maxStep = this.vehicle.turnRate * 1.5 * dt;
+
+    // On a route: follow the route's own line, so gentle bends and paths drifting away from the
+    // street are followed without an instruction. Announced turns are left to the traveller.
+    if (this.route && this.offRouteSince < 0) {
+      const up = this.upcoming();
+      const nearTurn = !!up && up.kind !== 'arrive' && up.d - this.routeProg < 8;
+      if (!nearTurn) {
+        const t = pointAlong(this.route, this.routeProg + this.speed * 0.6 + 4);
+        const err = relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y));
+        if (Math.abs(err) < 35) {
+          this.heading = normDeg(this.heading + Math.max(-maxStep, Math.min(maxStep, err * Math.min(1, dt * 4))));
+          return;
+        }
+      }
+    }
+
+    if (!this.onRoad || !this.road) return;
     const w = this.world!;
     const name = this.road.name;
     const same = (wy: Way) => wy.name === name && this.vehicle.canUse(wy);
@@ -461,7 +505,6 @@ export class Game {
     const toCentre = relAngle(dir, target);
     const aim = dir + Math.max(-25, Math.min(25, toCentre)); // follow the road, drifting back to its centre
     const err = relAngle(this.heading, aim);
-    const maxStep = this.vehicle.turnRate * 1.5 * dt;
     this.heading = normDeg(this.heading + Math.max(-maxStep, Math.min(maxStep, err * Math.min(1, dt * 4))));
   }
 
@@ -860,16 +903,176 @@ export class Game {
     }
   }
 
-  /** Plan (or re-plan) the route to the destination. */
-  private computeRoute(announce: boolean) {
+  /** Plan the route, first loading the streets toward the destination if it is beyond the loaded map. */
+  private prepareLocal(announce: boolean) {
+    const t = this.dest;
+    if (!t || !this.world) return;
+    if (!this.settings.turnByTurn || this.vehicle.id === 'helicopter') return this.clearRoute();
+    const c = this.routeWorld;
+    const corridorReady = c && c.vehicle === this.vehicle.id && this.inBox(c, t.x, t.y) && this.inBox(c, this.x, this.y);
+    if (corridorReady || this.inLoadedArea(t.x, t.y)) return this.planLocal(announce);
+    if (this.corridorLoading) return;
+    const d = dist(this.x, this.y, t.x, t.y);
+    if (d > CORRIDOR[this.vehicle.id].max) {
+      this.routeTooFar = true;
+      this.clearRoute();
+      if (announce) {
+        this.speech.say(
+          `The route planner is unavailable and the destination is too far to plan offline, ${fmtDistance(d, this.settings.units)} away. The beacon points straight at it.`,
+          'normal',
+        );
+      }
+      return;
+    }
+    void this.loadCorridor(announce);
+  }
+
+  /** Load the streets in a rectangle covering the traveller and the destination, then route on them. */
+  private async loadCorridor(announce: boolean) {
+    const t = this.dest!;
+    const vehicle = this.vehicle.id;
+    this.corridorAbort?.abort();
+    const abort = (this.corridorAbort = new AbortController());
+    const pad = 400;
+    const box = {
+      minX: Math.min(this.x, t.x) - pad,
+      minY: Math.min(this.y, t.y) - pad,
+      maxX: Math.max(this.x, t.x) + pad,
+      maxY: Math.max(this.y, t.y) + pad,
+    };
+    this.clearRoute();
+    this.corridorLoading = true;
+    if (announce) this.speech.say('Loading the streets toward the destination. Follow the beacon for now.', 'normal');
+    const sw = this.proj.toLatLon(box.minX, box.minY);
+    const ne = this.proj.toLatLon(box.maxX, box.maxY);
+    try {
+      const raw = await fetchRoadsBox(sw.lat, sw.lon, ne.lat, ne.lon, CORRIDOR[vehicle].types, abort.signal);
+      if (abort.signal.aborted || this.dest !== t || this.vehicle.id !== vehicle) return;
+      this.routeWorld = { world: new World(this.proj, raw), vehicle, ...box };
+      this.corridorLoading = false;
+      this.planLocal(true);
+    } catch (e) {
+      if (abort.signal.aborted) return;
+      console.error(e);
+      this.speech.say('Could not load the streets toward the destination. Follow the beacon.', 'normal');
+    } finally {
+      if (this.corridorAbort === abort) this.corridorLoading = false;
+    }
+  }
+
+  private dropCorridor() {
+    this.routeReq++;
+    this.corridorAbort?.abort();
+    this.corridorAbort = null;
+    this.corridorLoading = false;
+    this.routeWorld = null;
+    this.routeTooFar = false;
+  }
+
+  /** Inside a rectangle, at least 50 m from its edges. */
+  private inBox(b: { minX: number; minY: number; maxX: number; maxY: number }, x: number, y: number): boolean {
+    return x > b.minX + 50 && x < b.maxX - 50 && y > b.minY + 50 && y < b.maxY - 50;
+  }
+
+  /** Inside the square of map loaded around the traveller (with a safety margin). */
+  private inLoadedArea(x: number, y: number): boolean {
+    const r = this.vehicle.loadRadius * 0.85;
+    return Math.abs(x - this.loadCenter.x) < r && Math.abs(y - this.loadCenter.y) < r;
+  }
+
+  /**
+   * Plan (or re-plan) the route: the online router first (any distance, no map loading needed),
+   * then the loaded map as an offline fallback.
+   */
+  private async computeRoute(announce: boolean) {
+    this.lastRouteCalc = this.clock;
+    const t = this.dest;
+    if (!t || !this.world || !this.settings.turnByTurn || this.vehicle.id === 'helicopter') return this.clearRoute();
+    const req = ++this.routeReq;
+    const vehicle = this.vehicle.id;
+    if (hasOnlineRouting(vehicle)) {
+      this.routePending = true;
+      try {
+        const r = await fetchOnlineRoute(vehicle, this.proj, { x: this.x, y: this.y, heading: this.heading }, t, (x, y, dir) => this.namedRoadNear(x, y, dir));
+        if (req !== this.routeReq || this.dest !== t || this.vehicle.id !== vehicle) return; // superseded
+        if (r) return this.useRoute(r, announce);
+      } catch (e) {
+        if (req !== this.routeReq) return;
+        console.warn('Online routing unavailable, using the loaded map', e);
+      } finally {
+        if (req === this.routeReq) this.routePending = false;
+      }
+    }
+    this.prepareLocal(announce);
+  }
+
+  /** Spoken text for a manoeuvre; names an unnamed path after the street beside it once that area has loaded. */
+  private stepText(m: Maneuver, destName: string): string {
+    if (m.nameAt && !m.onto.startsWith('path along')) {
+      const along = this.namedRoadNear(m.nameAt.x, m.nameAt.y, m.nameDir);
+      if (along) m.onto = `path along ${along}`;
+    }
+    return maneuverText(m, destName);
+  }
+
+  /**
+   * Name of the nearest named street within 25 m. With a direction, the street must run roughly
+   * parallel to it, so a path that only crosses near a street isn't described as running along it.
+   */
+  private namedRoadNear(x: number, y: number, dir?: number, radius = 25, tol = 35): string | null {
+    for (const w of [this.world, this.routeWorld?.world]) {
+      if (!w) continue;
+      const named = (wy: Way) => wy.named;
+      const hit = dir === undefined ? w.nearestRoad(x, y, radius, named) : w.nearestRoadAlong(x, y, radius, dir, tol, named);
+      if (hit) return hit.seg.way.name;
+    }
+    return null;
+  }
+
+  /**
+   * A step that only moves between a street and its own sidewalk (or along that street's sidewalk)
+   * isn't a turn for the traveller, who follows the street itself. Such steps are not announced.
+   */
+  private isTrivial(m: Maneuver): boolean {
+    if (m.trivial !== undefined) return m.trivial;
+    if (m.kind === 'arrive' || m.kind === 'roundabout') return false;
+    const ontoStreet = m.ontoNamed ? m.onto : (this.stepText(m, ''), m.onto.startsWith('path along ') ? m.onto.slice(11) : null);
+    // coming from: the street we were right beside, even via a short diagonal link between sidewalks
+    const fromStreet = m.fromName || (m.fromAt ? this.namedRoadNear(m.fromAt.x, m.fromAt.y, m.fromDir, 12, 60) : null);
+    if (!ontoStreet || !fromStreet) return false; // not known yet; decide again once that area has loaded
+    if (m.ontoNamed && m.fromName) return (m.trivial = false); // a real street to a real street
+    return (m.trivial = ontoStreet === fromStreet);
+  }
+
+  /** The next manoeuvre worth announcing, at or after index i. */
+  private nextRealIndex(i: number): number {
+    const ms = this.route?.maneuvers ?? [];
+    while (i < ms.length && this.isTrivial(ms[i])) i++;
+    return i;
+  }
+
+  private upcoming(): Maneuver | undefined {
+    return this.route?.maneuvers[this.nextRealIndex(this.nextMan)];
+  }
+
+  /** Route on the loaded map data (offline fallback). */
+  private planLocal(announce: boolean) {
     this.lastRouteCalc = this.clock;
     if (!this.dest || !this.world || !this.settings.turnByTurn || this.vehicle.id === 'helicopter') return this.clearRoute();
-    const r = planRoute(this.world, { x: this.x, y: this.y, heading: this.heading }, this.dest, this.routeOptions());
+    const c = this.routeWorld;
+    const graph = c && c.vehicle === this.vehicle.id && this.inBox(c, this.x, this.y) ? c.world : this.world;
+    const r = planRoute(graph, { x: this.x, y: this.y, heading: this.heading }, this.dest, this.routeOptions());
     if (!r) {
       this.clearRoute();
       if (announce) this.speech.say('No route found from here. Follow the beacon.', 'normal');
       return;
     }
+    this.useRoute(r, announce);
+  }
+
+  /** Start guidance along a planned route, optionally announcing it. */
+  private useRoute(r: Route, announce: boolean) {
+    const dest = this.dest!;
     this.route = r;
     this.routeIdx = 0;
     this.routeProg = 0;
@@ -879,7 +1082,7 @@ export class Game {
     this.map.setRoute(r.points.map((p) => this.proj.toLatLon(p.x, p.y)));
     if (!announce) return;
     const u = this.settings.units;
-    const first = r.maneuvers[0];
+    const first = r.maneuvers[this.nextRealIndex(0)];
     const startAim = pointAlong(r, 15);
     const turnAround = Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, startAim.x, startAim.y))) > 120 ? 'Turn around. ' : '';
     const lead = `Route ${fmtDistance(r.length, u)}${r.partial ? ', as far as the map has loaded; it will extend as you go' : ''}. `;
@@ -887,12 +1090,58 @@ export class Game {
       first.kind === 'arrive'
         ? r.partial
           ? 'Follow this road.'
-          : `${this.dest.name} is ${fmtDistance(first.d, u)} along this road.`
-        : `In ${fmtDistance(first.d, u)}, ${maneuverText(first, this.dest.name)}.`;
+          : `${dest.name} is ${fmtDistance(first.d, u)} along this road.`
+        : `In ${fmtDistance(first.d, u)}, ${this.stepText(first, dest.name)}.`;
     // the instruction was just given: don't repeat the early reminders
     const th = this.stepThresholds;
     for (let k = 0; k < 2; k++) if (first.d <= th[k]) this.spokenSteps.add(k);
     this.speech.say(turnAround + lead + step, 'normal');
+  }
+
+  /**
+   * I: the next instruction. Pressed twice quickly: the next three, each with the distance
+   * from the one before, so the sequence can be pictured in order.
+   */
+  private instructions() {
+    const now = performance.now();
+    const double = now - this.lastIPress < 400;
+    this.lastIPress = double ? 0 : now; // a third quick press starts over
+    if (!this.dest) return this.speech.say('No destination. Press Control D to choose one.', 'high');
+    const r = this.route;
+    if (!r) {
+      const why = !this.settings.turnByTurn
+        ? 'Turn by turn is off; press T to turn it on.'
+        : this.vehicle.id === 'helicopter'
+          ? 'No turn by turn in the helicopter; follow the beacon.'
+          : this.routePending
+            ? 'Planning the route, one moment.'
+            : this.corridorLoading
+            ? 'Still loading the streets toward the destination. Follow the beacon for now.'
+            : this.routeTooFar
+              ? `The route planner is unavailable and ${this.dest.name} is too far to plan offline. Follow the beacon.`
+              : 'No route found; follow the beacon.';
+      return this.speech.say(why, 'high');
+    }
+    const u = this.settings.units;
+    const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m));
+    if (!steps.length) {
+      return this.speech.say(
+        r.partial
+          ? `Follow this road for ${fmtDistance(r.length - this.routeProg, u)}; more of the route loads as you go.`
+          : `Arriving at ${this.dest.name}.`,
+        'high',
+      );
+    }
+    const parts: string[] = [];
+    let at = this.routeProg;
+    for (const m of steps.slice(0, double ? 3 : 1)) {
+      const gap = Math.max(0, m.d - at);
+      const text = this.stepText(m, this.dest.name);
+      parts.push(parts.length ? `Then after ${fmtDistance(gap, u)}, ${text}` : `In ${fmtDistance(gap, u)}, ${text}`);
+      at = m.d;
+    }
+    if (double && steps.length <= 3 && r.partial) parts.push('The route continues as more map loads');
+    this.speech.say(parts.join('. ') + '.', 'high');
   }
 
   private clearRoute() {
@@ -912,7 +1161,7 @@ export class Game {
     }
     if (!this.dest) return this.speech.say('Turn by turn on. Press Control D to choose a destination.', 'high');
     this.speech.say('Turn by turn on.', 'high');
-    this.computeRoute(true);
+    void this.computeRoute(true);
   }
 
   /** Distances (m) before a manoeuvre at which it is spoken: early, closer, now. */
@@ -929,7 +1178,7 @@ export class Game {
 
   /** Is the next turn on the route within d metres? */
   private routeTurnWithin(d: number): boolean {
-    const m = this.route?.maneuvers[this.nextMan];
+    const m = this.upcoming();
     return !!m && m.kind !== 'arrive' && m.d - this.routeProg < d;
   }
 
@@ -960,12 +1209,12 @@ export class Game {
     this.routeProg = a.d + bt * (b.d - a.d);
 
     // off the route: re-plan after a short grace period
-    const tolerance = this.vehicle.id === 'walker' ? 20 : this.vehicle.id === 'bicycle' ? 25 : 30;
+    const tolerance = this.vehicle.id === 'walker' ? 30 : this.vehicle.id === 'bicycle' ? 25 : 30;
     if (best > tolerance) {
       if (this.offRouteSince < 0) this.offRouteSince = this.clock;
-      else if (this.clock - this.offRouteSince > 2.5 && this.clock - this.lastRouteCalc > 5) {
+      else if (this.clock - this.offRouteSince > 2.5 && this.clock - this.lastRouteCalc > 5 && !this.routePending) {
         this.speech.say('Off route. Recalculating.', 'high');
-        this.computeRoute(true);
+        void this.computeRoute(true);
       }
       return;
     }
@@ -973,7 +1222,7 @@ export class Game {
 
     // a route that stops at the edge of the loaded map: extend it as we approach the end
     if (r.partial && r.length - this.routeProg < 150 && this.clock - this.lastRouteCalc > 5) {
-      this.computeRoute(false);
+      void this.computeRoute(false);
       return;
     }
 
@@ -981,33 +1230,37 @@ export class Game {
     // manoeuvres we have passed
     while (this.nextMan < r.maneuvers.length && r.maneuvers[this.nextMan].d < this.routeProg - 3) {
       const passed = r.maneuvers[this.nextMan++];
+      if (this.isTrivial(passed)) continue; // stepping onto the sidewalk: nothing to say
       this.spokenSteps.clear();
-      const next = r.maneuvers[this.nextMan];
+      const next = r.maneuvers[this.nextRealIndex(this.nextMan)];
       if (next && passed.kind !== 'arrive') {
         const gap = next.d - this.routeProg;
         if (gap > th[1] * 1.4) {
           // say what comes next now, instead of a separate early reminder moments later
-          const then = next.kind === 'arrive' && r.partial ? '' : `, then ${maneuverText(next, dest.name)}`;
-          this.speech.say(`Continue on ${passed.ontoNamed ? passed.onto : 'this road'} for ${fmtDistance(gap, u)}${then}.`, 'normal');
+          const then = next.kind === 'arrive' && r.partial ? '' : `, then ${this.stepText(next, dest.name)}`;
+          this.stepText(passed, dest.name); // fills in the street name of an unnamed path if now known
+          const along = passed.ontoNamed ? `on ${passed.onto}` : passed.onto.startsWith('path along ') ? passed.onto.slice(5) : 'straight';
+          this.speech.say(`Continue ${along} for ${fmtDistance(gap, u)}${then}.`, 'normal');
           if (gap <= th[0] * 1.5) this.spokenSteps.add(0);
         }
       }
     }
-    const m = r.maneuvers[this.nextMan];
+    const mi = this.nextRealIndex(this.nextMan);
+    const m = r.maneuvers[mi];
     if (!m || (m.kind === 'arrive' && r.partial)) return;
     const d = m.d - this.routeProg;
     for (let k = 2; k >= 0; k--) {
       if (d > th[k] || this.spokenSteps.has(k)) continue;
       if (k < 2 && d <= th[k + 1] * 1.4) continue; // the closer reminder is coming up anyway
       for (let j = 0; j <= k; j++) this.spokenSteps.add(j); // never say an earlier reminder after a later one
-      const text = maneuverText(m, dest.name);
-      const n2 = r.maneuvers[this.nextMan + 1];
-      const then = n2 && n2.d - m.d < 60 && !(n2.kind === 'arrive' && r.partial) ? `, then ${maneuverText(n2, dest.name)}` : '';
+      const text = this.stepText(m, dest.name);
+      const n2 = r.maneuvers[this.nextRealIndex(mi + 1)];
+      const then = n2 && n2.d - m.d < 60 && !(n2.kind === 'arrive' && r.partial) ? `, then ${this.stepText(n2, dest.name)}` : '';
       if (k < 2) {
         this.speech.say(`In ${fmtDistance(d, u)}, ${text}${then}.`, k === 0 ? 'normal' : 'high');
       } else if (m.kind !== 'arrive') {
         this.audio.turnCue(m.rel);
-        this.speech.say(`${cap(text)} now${then}.`, 'high');
+        this.speech.say(`${cap(text)}${then}.`, 'high');
       }
       break;
     }
@@ -1076,6 +1329,8 @@ export class Game {
         return this.speech.say(`Beacon sound ${this.settings.beaconSound ? 'on' : 'off'}.`, 'high');
       case 't':
         return this.toggleTurnByTurn();
+      case 'i':
+        return this.instructions();
       case 'w':
         return this.whatsAround();
       case ' ':
@@ -1094,7 +1349,7 @@ export class Game {
         this.onMenu?.('search');
         return;
       case 'd':
-        if (!c.ctrl) return false;
+        if (!c.ctrl) return this.distanceToGo();
         this.onNavigate?.();
         return;
       case 'm':
@@ -1150,7 +1405,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road. R aligns with the road. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you, period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control D searches for a destination. T toggles turn by turn directions, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
+        'Control D searches for a destination. D says the distance to go, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
         '1 to 4 change vehicle. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -1421,6 +1676,7 @@ export class Game {
     }
     this.dest = t;
     this.nextBeacon = 0;
+    this.dropCorridor();
     const d0 = dist(this.x, this.y, t.x, t.y);
     this.destMilestone = MILESTONES.find((m) => d0 <= m) ?? Infinity;
     this.map.setDestination(this.proj.toLatLon(t.x, t.y));
@@ -1428,7 +1684,7 @@ export class Game {
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y));
     const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter';
     this.speech.say(`Destination ${t.name}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}.${guided ? '' : ' Follow the beacon.'}`, 'high');
-    if (guided) this.computeRoute(true);
+    if (guided) void this.computeRoute(true);
     else this.clearRoute();
   }
 
@@ -1467,6 +1723,26 @@ export class Game {
     return this.proj ? this.proj.toLatLon(this.x, this.y) : null;
   }
 
+  /**
+   * D: how far is left. Along the route when there is one (with an estimated time), plus the
+   * straight-line distance and direction.
+   */
+  private distanceToGo() {
+    if (!this.dest) return this.speech.say('No destination. Press Control D to choose one.', 'high');
+    const u = this.settings.units;
+    const d = dist(this.x, this.y, this.dest.x, this.dest.y);
+    const b = bearingTo(this.x, this.y, this.dest.x, this.dest.y);
+    const straight = `${fmtDistance(d, u)} in a straight line, ${compass8(b)}`;
+    const r = this.route;
+    if (!r || r.partial) return this.speech.say(`${this.dest.name}: ${straight}.`, 'high');
+    const left = Math.max(0, r.length - this.routeProg);
+    // time at the current speed, or a typical speed for the vehicle when stopped
+    const typical = { walker: 1.3, bicycle: 4.5, car: 9, helicopter: 50 }[this.vehicle.id];
+    const minutes = Math.max(1, Math.round(left / (this.speed > 0.5 ? this.speed : typical) / 60));
+    const time = minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+    this.speech.say(`${fmtDistance(left, u)} to go along the route, about ${time}. ${straight}.`, 'high');
+  }
+
   private destinationInfo() {
     if (!this.dest) return this.speech.say('No destination. Press Control D to search for one, or Tab to pick a nearby place and Enter.', 'high');
     const u = this.settings.units;
@@ -1475,8 +1751,8 @@ export class Game {
     const straight = `${this.dest.name}, ${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
     const r = this.route;
     if (!r) return this.speech.say(`${straight}.`, 'high');
-    const m = r.maneuvers[this.nextMan];
-    const next = m && m.kind !== 'arrive' ? `${cap(maneuverText(m, this.dest.name))} in ${fmtDistance(m.d - this.routeProg, u)}. ` : '';
+    const m = this.upcoming();
+    const next = m && m.kind !== 'arrive' ? `${cap(this.stepText(m, this.dest.name))} in ${fmtDistance(m.d - this.routeProg, u)}. ` : '';
     const left = r.partial ? `${fmtDistance(r.length - this.routeProg, u)} of route loaded so far` : `${fmtDistance(r.length - this.routeProg, u)} to go`;
     this.speech.say(`${next}${left}. ${straight} in a straight line.`, 'high');
   }
@@ -1485,6 +1761,7 @@ export class Game {
     if (!this.dest) return this.speech.say('No destination set.', 'high');
     this.dest = null;
     this.map.setDestination(null);
+    this.dropCorridor();
     this.clearRoute();
     this.speech.say('Destination cleared.', 'high');
   }
@@ -1501,6 +1778,16 @@ export class Game {
   /** Turn onto the next road branch to the left or right, at the nearest intersection or along the current road. */
   private snapTurn(dir: -1 | 1) {
     const w = this.world!;
+    // at a turn on the route (just before or just after it), turn onto exactly the route's next road
+    const m = this.upcoming();
+    if (this.route && m && m.kind !== 'arrive' && Math.abs(m.d - this.routeProg) < 30 && (Math.abs(m.rel) < 25 || Math.sign(m.rel) === dir)) {
+      // aim from where we are to a point a little way along the new road, so pressing a few metres early still works
+      const t = pointAlong(this.route, Math.max(m.d, this.routeProg) + 15);
+      this.heading = normDeg(Math.round(bearingTo(this.x, this.y, t.x, t.y)));
+      this.lastManualTurn = this.clock;
+      this.audio.tick(true);
+      return this.speech.say(`${this.stepText(m, this.dest?.name ?? '').replace(/^.*? onto /, '')}, ${compass8(this.heading)}.`, 'high');
+    }
     const options: { b: number; name: string }[] = [];
     const nodes = w.nodesNear(this.x, this.y, 25).filter((n) => w.isIntersection(n, this.filter));
     nodes.sort((a, b) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y));
@@ -1534,8 +1821,8 @@ export class Game {
     if (this.dest) {
       const d = dist(this.x, this.y, this.dest.x, this.dest.y);
       destination = `${this.dest.name} · ${fmtDistance(d, u)} · ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, this.dest.x, this.dest.y)))}`;
-      const m = this.route?.maneuvers[this.nextMan];
-      if (m && m.kind !== 'arrive') destination += ` · ${maneuverText(m, this.dest.name)} in ${fmtDistance(m.d - this.routeProg, u)}`;
+      const m = this.upcoming();
+      if (m && m.kind !== 'arrive') destination += ` · ${this.stepText(m, this.dest.name)} in ${fmtDistance(m.d - this.routeProg, u)}`;
     }
     this.onHud?.({
       street: this.streetName ?? (this.onRoad ? '' : 'Off road'),

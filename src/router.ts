@@ -16,9 +16,20 @@ export interface Maneuver {
   d: number;
   /** turn angle, degrees: negative left, positive right */
   rel: number;
-  kind: 'continue' | 'bear' | 'turn' | 'sharp' | 'u-turn' | 'arrive';
+  kind: 'continue' | 'bear' | 'turn' | 'sharp' | 'u-turn' | 'roundabout' | 'arrive';
   onto: string;
   ontoNamed: boolean;
+  /** roundabout exit number */
+  exit?: number;
+  /** for unnamed paths: a point on them and their direction, so the street they run beside can be named later */
+  nameAt?: { x: number; y: number };
+  nameDir?: number;
+  /** the road before the manoeuvre: its name if named, else a point and direction on it */
+  fromName?: string;
+  fromAt?: { x: number; y: number };
+  fromDir?: number;
+  /** cached: just moving between a street and its own sidewalk (not announced) */
+  trivial?: boolean;
 }
 
 export interface Route {
@@ -42,7 +53,12 @@ export interface RouteOptions {
 
 const MAX_EXPANSIONS = 300_000;
 
-export function planRoute(w: World, from: { x: number; y: number; heading: number }, to: { x: number; y: number }, o: RouteOptions): Route | null {
+export function planRoute(
+  w: World,
+  from: { x: number; y: number; heading: number },
+  to: { x: number; y: number; radius?: number },
+  o: RouteOptions,
+): Route | null {
   const hit = w.nearestRoad(from.x, from.y, 60, o.canUse);
   if (!hit) return null;
 
@@ -121,7 +137,7 @@ export function planRoute(w: World, from: { x: number; y: number; heading: numbe
   if (!end) end = closest;
   if (!end) return null;
   const endD = dist(end.x, end.y, to.x, to.y);
-  const partial = endD > 150;
+  const partial = endD > Math.max(150, (to.radius ?? 0) + 100);
 
   const path: GNode[] = [];
   for (let id: number | undefined = end.id; id !== undefined; id = prev.get(id)) path.push(w.nodes.get(id)!);
@@ -163,7 +179,7 @@ function classify(rel: number, sameRoad: boolean): Maneuver['kind'] {
 }
 
 function maneuvers(path: GNode[], points: RoutePoint[], ways: (Way | null)[], o: RouteOptions): Maneuver[] {
-  const out: (Maneuver & { inName: string })[] = [];
+  const out: (Maneuver & { inName: string; kStart: number })[] = [];
   // points[k] is path[k - 1]; ways[k] is the road used to reach points[k]
   for (let k = 1; k < path.length; k++) {
     const node = path[k - 1];
@@ -174,33 +190,40 @@ function maneuvers(path: GNode[], points: RoutePoint[], ways: (Way | null)[], o:
     const choice = node.edges.filter((e) => o.canUse(e.way)).length >= 3;
     if (!choice && Math.abs(rel) < 60) continue; // the road just curves
     const p = points[k];
-    let m = { x: p.x, y: p.y, d: p.d, rel, kind: classify(rel, inWay === outWay), onto: outWay.name, ontoNamed: outWay.named, inName: inWay.name };
-    // two turns close together (crossing a divided road, staggered junction): one combined manoeuvre
+    let m = { x: p.x, y: p.y, d: p.d, rel, kind: classify(rel, inWay === outWay), onto: outWay.name, ontoNamed: outWay.named, inName: inWay.name, kStart: k };
+    // turn points close together (crossing a divided road, a crosswalk node beside the junction):
+    // one manoeuvre, measured once from before the first point to after the last. Adding the two
+    // angles would count the same turn twice, since each is measured over a 15 m window.
     const last = out[out.length - 1];
     if (last && m.d - last.d < 15) {
       out.pop();
-      const r = relAngle(0, last.rel + rel);
-      m = { ...m, rel: r, kind: classify(r, false), inName: last.inName };
+      const r = relAngle(routeBearing(points, last.kStart, -1), routeBearing(points, k, 1));
+      m = { ...m, rel: r, kind: classify(r, false), inName: last.inName, kStart: last.kStart };
     }
     // going straight on is only worth saying at a junction where the street name changes
     if (m.kind === 'continue' && (!choice || !m.ontoNamed || m.onto === m.inName)) continue;
     out.push(m);
   }
   const end = points[points.length - 1];
-  const res: Maneuver[] = out.map(({ inName: _, ...m }) => m);
+  const res: Maneuver[] = out.map(({ inName: _i, kStart: _k, ...m }) => m);
   res.push({ x: end.x, y: end.y, d: end.d, rel: 0, kind: 'arrive', onto: '', ontoNamed: false });
   return res;
 }
 
 /** Spoken form: "turn left onto Oak Street", "bear right onto the footpath", "make a U-turn". */
 export function maneuverText(m: Maneuver, destName: string): string {
-  if (m.kind === 'arrive') return `arrive at ${destName}`;
-  if (m.kind === 'u-turn') return 'make a U-turn';
   const side = m.rel < 0 ? 'left' : 'right';
+  if (m.kind === 'arrive') return `arrive at ${destName}${Math.abs(m.rel) >= 25 ? `, on your ${side}` : ''}`;
+  if (m.kind === 'u-turn') return 'make a U-turn';
   const onto = m.ontoNamed ? m.onto : `the ${m.onto}`;
+  if (m.kind === 'roundabout') return `at the roundabout, take the ${ordinal(m.exit ?? 1)} exit onto ${onto}`;
   if (m.kind === 'continue') return `continue onto ${onto}`;
   const verb = m.kind === 'bear' ? 'bear' : m.kind === 'sharp' ? 'turn sharp' : 'turn';
   return `${verb} ${side} onto ${onto}`;
+}
+
+function ordinal(n: number): string {
+  return ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'][n - 1] ?? `number ${n}`;
 }
 
 /** Point at distance d along the route. */

@@ -266,6 +266,20 @@ export class World {
     return best;
   }
 
+  /** Nearest road within maxDist that runs within tol degrees of dir (in either direction along it). */
+  nearestRoadAlong(x: number, y: number, maxDist: number, dir: number, tol: number, filter?: (w: Way) => boolean): RoadHit | null {
+    let best: RoadHit | null = null;
+    for (const seg of this.segGrid.query(x, y, maxDist)) {
+      if (filter && !filter(seg.way)) continue;
+      const sd = bearing(seg.ax, seg.ay, seg.bx, seg.by);
+      const a = Math.abs(relAngle(dir, sd));
+      if (a > tol && a < 180 - tol) continue;
+      const hit = pointSeg(x, y, seg.ax, seg.ay, seg.bx, seg.by);
+      if (hit.dist <= maxDist && (!best || hit.dist < best.hit.dist)) best = { seg, hit, dir: sd };
+    }
+    return best;
+  }
+
   nodesNear(x: number, y: number, r: number): GNode[] {
     const out: GNode[] = [];
     for (const n of this.nodeGrid.query(x, y, r)) if (dist(x, y, n.x, n.y) <= r) out.push(n);
