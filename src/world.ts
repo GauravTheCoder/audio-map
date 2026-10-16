@@ -1,0 +1,388 @@
+// The explorable world: road graph, spatial indexes and named places in local metres.
+
+import { Projection, bearing, dist, pointSeg, relAngle, type SegHit } from './geo';
+import type { RawPlaces, RawRoads } from './osm';
+
+export interface Way {
+  id: number;
+  type: string;
+  name: string;
+  /** true if the name came from OSM rather than being a generic description */
+  named: boolean;
+  service?: string;
+  surface?: string;
+  bridge: boolean;
+  tunnel: boolean;
+  /** traffic may only travel one way along this road */
+  oneway: boolean;
+  /** the permitted direction is against the order of the way's nodes (oneway=-1) */
+  onewayReverse: boolean;
+}
+
+export interface Edge {
+  to: number;
+  way: Way;
+  /** true if this edge runs in the order of the way's nodes */
+  fwd: boolean;
+}
+
+export interface GNode {
+  id: number;
+  x: number;
+  y: number;
+  edges: Edge[];
+  signals: boolean;
+}
+
+export interface Segment {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  /** node ids at each end */
+  a: number;
+  b: number;
+  way: Way;
+}
+
+export interface RoadWalk {
+  /** the junction (or dead end) reached */
+  node: GNode;
+  /** distance travelled along the road, metres */
+  dist: number;
+  /** direction of travel over the last ~15 m into the node, degrees */
+  arrival: number;
+  deadEnd: boolean;
+  /** name of the road we arrive on */
+  arriveName: string;
+}
+
+export interface Place {
+  id: string;
+  name: string;
+  category: string;
+  /** coarse group used for sound choice */
+  group: PlaceGroup;
+  x: number;
+  y: number;
+}
+
+export interface Junction {
+  nodes: GNode[];
+  exits: { from: GNode; edge: Edge }[];
+  signals: boolean;
+}
+
+export type PlaceGroup = 'food' | 'shop' | 'transport' | 'culture' | 'nature' | 'health' | 'service' | 'other';
+
+export interface RoadHit {
+  seg: Segment;
+  hit: SegHit;
+  /** direction of the segment, a→b, degrees */
+  dir: number;
+}
+
+class Grid<T> {
+  private cells = new Map<string, T[]>();
+  constructor(private readonly size: number) {}
+
+  private key(cx: number, cy: number) {
+    return `${cx},${cy}`;
+  }
+
+  insertBox(item: T, minX: number, minY: number, maxX: number, maxY: number) {
+    const s = this.size;
+    for (let cx = Math.floor(minX / s); cx <= Math.floor(maxX / s); cx++) {
+      for (let cy = Math.floor(minY / s); cy <= Math.floor(maxY / s); cy++) {
+        const k = this.key(cx, cy);
+        let arr = this.cells.get(k);
+        if (!arr) this.cells.set(k, (arr = []));
+        arr.push(item);
+      }
+    }
+  }
+
+  query(x: number, y: number, r: number): Set<T> {
+    const out = new Set<T>();
+    const s = this.size;
+    for (let cx = Math.floor((x - r) / s); cx <= Math.floor((x + r) / s); cx++) {
+      for (let cy = Math.floor((y - r) / s); cy <= Math.floor((y + r) / s); cy++) {
+        const arr = this.cells.get(this.key(cx, cy));
+        if (arr) for (const it of arr) out.add(it);
+      }
+    }
+    return out;
+  }
+}
+
+const TYPE_NAMES: Record<string, string> = {
+  footway: 'footpath',
+  path: 'path',
+  pedestrian: 'pedestrian street',
+  steps: 'steps',
+  cycleway: 'cycle path',
+  track: 'track',
+  service: 'service road',
+  motorway: 'motorway',
+  motorway_link: 'motorway ramp',
+  trunk_link: 'slip road',
+  primary_link: 'slip road',
+  secondary_link: 'slip road',
+  tertiary_link: 'slip road',
+};
+
+export function humanize(v: string): string {
+  return v.replace(/_/g, ' ').replace(/;/g, ', ');
+}
+
+function groupFor(tags: Record<string, string>): { category: string; group: PlaceGroup } {
+  const a = tags.amenity;
+  if (tags.highway === 'bus_stop') return { category: 'bus stop', group: 'transport' };
+  if (tags.railway === 'station' || tags.public_transport === 'station') return { category: 'station', group: 'transport' };
+  if (a) {
+    if (['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'ice_cream', 'food_court', 'biergarten'].includes(a))
+      return { category: humanize(a), group: 'food' };
+    if (['hospital', 'clinic', 'pharmacy', 'doctors', 'dentist', 'veterinary'].includes(a))
+      return { category: humanize(a), group: 'health' };
+    if (['bus_station', 'parking', 'fuel', 'taxi', 'bicycle_rental', 'ferry_terminal', 'charging_station'].includes(a))
+      return { category: humanize(a), group: 'transport' };
+    if (['theatre', 'cinema', 'library', 'arts_centre', 'place_of_worship', 'community_centre', 'museum'].includes(a))
+      return { category: humanize(a), group: 'culture' };
+    if (a === 'fountain') return { category: 'fountain', group: 'nature' };
+    return { category: humanize(a), group: 'service' };
+  }
+  if (tags.shop) return { category: tags.shop === 'yes' ? 'shop' : `${humanize(tags.shop)} shop`, group: 'shop' };
+  if (tags.tourism) {
+    const t = tags.tourism;
+    return { category: humanize(t), group: ['museum', 'gallery', 'artwork', 'attraction', 'viewpoint'].includes(t) ? 'culture' : 'service' };
+  }
+  if (tags.leisure) {
+    const l = tags.leisure;
+    return { category: humanize(l), group: ['park', 'garden', 'nature_reserve', 'playground', 'dog_park'].includes(l) ? 'nature' : 'other' };
+  }
+  if (tags.historic) return { category: `historic ${humanize(tags.historic)}`, group: 'culture' };
+  return { category: 'place', group: 'other' };
+}
+
+export class World {
+  readonly nodes = new Map<number, GNode>();
+  readonly ways: Way[] = [];
+  readonly places: Place[] = [];
+  private segGrid = new Grid<Segment>(60);
+  private nodeGrid = new Grid<GNode>(80);
+  private placeGrid = new Grid<Place>(100);
+
+  constructor(readonly proj: Projection, raw: RawRoads) {
+    for (const rw of raw.ways) {
+      const t = rw.tags;
+      const type = t.highway;
+      const nm = t.name ?? t.ref;
+      const way: Way = {
+        id: rw.id,
+        type,
+        name: nm ?? TYPE_NAMES[type] ?? 'unnamed road',
+        named: !!nm,
+        service: t.service,
+        surface: t.surface,
+        bridge: !!t.bridge && t.bridge !== 'no',
+        tunnel: !!t.tunnel && t.tunnel !== 'no',
+        oneway: t.oneway === 'yes' || t.oneway === '1' || t.oneway === '-1' || (t.junction === 'roundabout' && t.oneway !== 'no'),
+        onewayReverse: t.oneway === '-1',
+      };
+      this.ways.push(way);
+
+      let prev: GNode | null = null;
+      for (const nid of rw.nodes) {
+        const ll = raw.nodes.get(nid);
+        if (!ll) {
+          prev = null;
+          continue;
+        }
+        let n = this.nodes.get(nid);
+        if (!n) {
+          const p = proj.toXY(ll.lat, ll.lon);
+          n = { id: nid, x: p.x, y: p.y, edges: [], signals: false };
+          this.nodes.set(nid, n);
+          this.nodeGrid.insertBox(n, n.x, n.y, n.x, n.y);
+        }
+        if (prev && prev !== n) {
+          prev.edges.push({ to: n.id, way, fwd: true });
+          n.edges.push({ to: prev.id, way, fwd: false });
+          const seg: Segment = { ax: prev.x, ay: prev.y, bx: n.x, by: n.y, a: prev.id, b: n.id, way };
+          this.segGrid.insertBox(
+            seg,
+            Math.min(seg.ax, seg.bx),
+            Math.min(seg.ay, seg.by),
+            Math.max(seg.ax, seg.bx),
+            Math.max(seg.ay, seg.by),
+          );
+        }
+        prev = n;
+      }
+    }
+  }
+
+  /** Places arrive separately from roads so travel can start sooner. */
+  addPlaces(raw: RawPlaces) {
+    // Signals are often mapped on each approach a few metres before the junction node.
+    for (const id of raw.signals) {
+      const n = this.nodes.get(id);
+      if (!n) continue;
+      n.signals = true;
+      for (const m of this.nodesNear(n.x, n.y, 30)) if (m.edges.length >= 3) m.signals = true;
+    }
+    const proj = this.proj;
+    const seen = new Set<string>();
+    for (const rp of raw.places) {
+      const key = `${rp.tags.name}|${rp.lat.toFixed(4)}|${rp.lon.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const p = proj.toXY(rp.lat, rp.lon);
+      const { category, group } = groupFor(rp.tags);
+      const place: Place = { id: rp.id, name: rp.tags.name, category, group, x: p.x, y: p.y };
+      this.places.push(place);
+      this.placeGrid.insertBox(place, p.x, p.y, p.x, p.y);
+    }
+  }
+
+  get isEmpty(): boolean {
+    return this.ways.length === 0;
+  }
+
+  /** Nearest road segment within maxDist. Named roads win close ties so sidewalks don't hide the street. */
+  nearestRoad(x: number, y: number, maxDist: number, filter?: (w: Way) => boolean): RoadHit | null {
+    let best: RoadHit | null = null;
+    let bestScore = Infinity;
+    for (const seg of this.segGrid.query(x, y, maxDist)) {
+      if (filter && !filter(seg.way)) continue;
+      const hit = pointSeg(x, y, seg.ax, seg.ay, seg.bx, seg.by);
+      if (hit.dist > maxDist) continue;
+      const score = hit.dist - (seg.way.named ? 4 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        best = { seg, hit, dir: bearing(seg.ax, seg.ay, seg.bx, seg.by) };
+      }
+    }
+    return best;
+  }
+
+  nodesNear(x: number, y: number, r: number): GNode[] {
+    const out: GNode[] = [];
+    for (const n of this.nodeGrid.query(x, y, r)) if (dist(x, y, n.x, n.y) <= r) out.push(n);
+    return out;
+  }
+
+  placesNear(x: number, y: number, r: number): { place: Place; d: number }[] {
+    const out: { place: Place; d: number }[] = [];
+    for (const p of this.placeGrid.query(x, y, r)) {
+      const d = dist(x, y, p.x, p.y);
+      if (d <= r) out.push({ place: p, d });
+    }
+    out.sort((a, b) => a.d - b.d);
+    return out;
+  }
+
+  /** Edges at a node that matter for the given filter (deduplicated by direction). */
+  relevantEdges(n: GNode, filter: (w: Way) => boolean): Edge[] {
+    return n.edges.filter((e) => filter(e.way));
+  }
+
+  isIntersection(n: GNode, filter: (w: Way) => boolean): boolean {
+    return this.relevantEdges(n, filter).length >= 3;
+  }
+
+  /**
+   * Group intersection nodes that form one junction (dual carriageways, complex crossings)
+   * and list the roads leaving it.
+   */
+  junction(seed: GNode, filter: (w: Way) => boolean, radius: number): Junction {
+    const members = new Map<number, GNode>([[seed.id, seed]]);
+    const queue = [seed];
+    while (queue.length) {
+      const n = queue.pop()!;
+      for (const e of n.edges) {
+        if (!filter(e.way) || members.has(e.to)) continue;
+        const m = this.nodes.get(e.to)!;
+        if (dist(seed.x, seed.y, m.x, m.y) > radius) continue;
+        members.set(m.id, m);
+        queue.push(m);
+      }
+    }
+    const exits: { from: GNode; edge: Edge }[] = [];
+    let signals = false;
+    for (const n of members.values()) {
+      signals ||= n.signals;
+      for (const e of n.edges) if (filter(e.way) && !members.has(e.to)) exits.push({ from: n, edge: e });
+    }
+    return { nodes: [...members.values()], exits, signals };
+  }
+
+  /**
+   * Follow the road from prev→cur until a node where isStop() holds, or the road ends.
+   * At forks that are not stops it keeps to the same street name and the straightest continuation.
+   */
+  followRoad(
+    prev: GNode,
+    cur: GNode,
+    startDist: number,
+    name: string,
+    canUse: (w: Way) => boolean,
+    isStop: (n: GNode) => boolean,
+    maxDist: number,
+  ): RoadWalk | null {
+    const trail: GNode[] = [prev];
+    let d = startDist;
+    let arriveName = name;
+    for (let guard = 0; guard < 5000 && d <= maxDist; guard++) {
+      trail.push(cur);
+      if (isStop(cur)) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: false, arriveName };
+      const heading = bearing(prev.x, prev.y, cur.x, cur.y);
+      let best: { node: GNode; way: Way } | null = null;
+      let bestScore = Infinity;
+      for (const e of cur.edges) {
+        if (e.to === prev.id || !canUse(e.way)) continue;
+        const nn = this.nodes.get(e.to)!;
+        const turn = Math.abs(relAngle(heading, bearing(cur.x, cur.y, nn.x, nn.y)));
+        const score = turn + (e.way.name === name ? 0 : 45);
+        if (score < bestScore) {
+          bestScore = score;
+          best = { node: nn, way: e.way };
+        }
+      }
+      if (!best) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: true, arriveName };
+      d += dist(cur.x, cur.y, best.node.x, best.node.y);
+      arriveName = best.way.name;
+      prev = cur;
+      cur = best.node;
+    }
+    return null;
+  }
+
+  /** Bearing leaving node n along edge e, measured over ~15 m so short kinks don't mislead. */
+  edgeBearing(n: GNode, e: Edge): number {
+    let from = n;
+    let cur = this.nodes.get(e.to)!;
+    let travelled = dist(from.x, from.y, cur.x, cur.y);
+    // follow the same way through degree-2 nodes until far enough
+    while (travelled < 15) {
+      const next = cur.edges.find((x) => x.way === e.way && x.to !== from.id);
+      if (!next || cur.edges.length > 2) break;
+      const nn = this.nodes.get(next.to)!;
+      travelled += dist(cur.x, cur.y, nn.x, nn.y);
+      from = cur;
+      cur = nn;
+    }
+    return bearing(n.x, n.y, cur.x, cur.y);
+  }
+}
+
+/** Direction of travel over roughly the last 15 m of a path. */
+function arrivalBearing(trail: GNode[]): number {
+  const end = trail[trail.length - 1];
+  let back = 0;
+  for (let i = trail.length - 2; i >= 0; i--) {
+    back += dist(trail[i].x, trail[i].y, trail[i + 1].x, trail[i + 1].y);
+    if (back >= 15 || i === 0) return bearing(trail[i].x, trail[i].y, end.x, end.y);
+  }
+  return 0;
+}

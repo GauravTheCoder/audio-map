@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Explore real city streets by sound and keyboard. Built for blind and low-vision travellers." />
+    <title>Audio Map Explorer</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <div
+        id="stage"
+        role="application"
+        tabindex="0"
+        aria-roledescription="map explorer"
+        aria-label="Map explorer. Use arrow keys to move. Press F1 for help, Escape for the menu."
+      >
+        <div id="map" aria-hidden="true"></div>
+        <div id="hud" aria-hidden="true">
+          <div class="hud-street" id="hud-street">—</div>
+          <div class="hud-row">
+            <span id="hud-speed">0 km/h</span>
+            <span id="hud-heading">0° north</span>
+          </div>
+          <div class="hud-area" id="hud-area"></div>
+          <div class="hud-dest" id="hud-dest" hidden></div>
+          <div class="hud-status" id="hud-status"></div>
+        </div>
+        <button id="menu-btn" type="button" tabindex="-1" aria-hidden="true">Menu (Esc)</button>
+      </div>
+    </div>
+
+    <dialog id="menu" aria-labelledby="menu-title">
+      <form method="dialog" id="menu-form">
+        <h1 id="menu-title">Audio Map Explorer</h1>
+        <p class="lede">Explore real streets by sound. Choose a place and a vehicle, then press Start.</p>
+
+        <section aria-labelledby="where-h">
+          <h2 id="where-h">Where</h2>
+          <p id="selected-place" class="selected" aria-live="polite">Selected: Times Square, New York</p>
+          <div class="search-row">
+            <label for="search">Search a place or address</label>
+            <div class="inline">
+              <input id="search" type="search" autocomplete="off" placeholder="e.g. Eiffel Tower, Paris" />
+              <button type="button" id="search-btn">Search</button>
+            </div>
+          </div>
+          <p id="search-status" class="hint" aria-live="polite"></p>
+          <ul id="results" class="results" aria-label="Search results"></ul>
+          <div class="presets" role="group" aria-labelledby="presets-h">
+            <h3 id="presets-h">Or start from</h3>
+            <button type="button" class="preset" data-lat="40.7580" data-lon="-73.9855">Times Square, New York</button>
+            <button type="button" class="preset" data-lat="51.5080" data-lon="-0.1281">Trafalgar Square, London</button>
+            <button type="button" class="preset" data-lat="48.8606" data-lon="2.3376">Louvre, Paris</button>
+            <button type="button" class="preset" data-lat="28.6315" data-lon="77.2167">Connaught Place, New Delhi</button>
+            <button type="button" class="preset" data-lat="35.6595" data-lon="139.7005">Shibuya, Tokyo</button>
+            <button type="button" id="geo-btn">Use my location</button>
+          </div>
+        </section>
+
+        <fieldset>
+          <legend>Vehicle</legend>
+          <label><input type="radio" name="vehicle" value="walker" /> Walker (key 1)</label>
+          <label><input type="radio" name="vehicle" value="bicycle" /> Bicycle (key 2)</label>
+          <label><input type="radio" name="vehicle" value="car" /> Car (key 3)</label>
+          <label><input type="radio" name="vehicle" value="helicopter" /> Helicopter (key 4)</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Speech</legend>
+          <label><input type="radio" name="speechMode" value="screenreader" /> My screen reader</label>
+          <label><input type="radio" name="speechMode" value="voice" /> Built-in voice (faster, interruptible)</label>
+          <label class="range">Voice speed <input type="range" id="voiceRate" min="0.6" max="3" step="0.1" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Announcements and sound</legend>
+          <label><input type="checkbox" id="announceStreets" /> Announce street names</label>
+          <label><input type="checkbox" id="announcePlaces" /> Announce places I pass</label>
+          <label><input type="checkbox" id="announceHeadingAfterTurn" /> Announce heading after turning</label>
+          <label><input type="checkbox" id="roadAssist" /> Road assist: gently follow the road while not turning (key A)</label>
+          <label><input type="checkbox" id="turnByTurn" /> Turn-by-turn directions to the destination (key T)</label>
+          <label><input type="checkbox" id="beaconSound" /> Destination beacon sound (key B)</label>
+          <label><input type="checkbox" id="proximityBeeps" /> Beeps that quicken as an intersection approaches (Shift + B)</label>
+          <label><input type="checkbox" id="compassTicks" /> Compass ticks while turning</label>
+          <label><input type="checkbox" id="headingUpMap" /> Rotate visual map with heading</label>
+          <label class="range">Volume <input type="range" id="volume" min="0" max="1" step="0.1" /></label>
+          <label class="select">Units
+            <select id="units">
+              <option value="metric">Metric</option>
+              <option value="imperial">Imperial</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="button" id="start-btn" class="primary">Start</button>
+          <button type="button" id="resume-btn" hidden>Resume</button>
+        </div>
+
+        <section aria-labelledby="keys-h">
+          <h2 id="keys-h">Keyboard commands</h2>
+          <table class="keys">
+            <caption class="sr-only">Keys and what they do</caption>
+            <thead><tr><th scope="col">Key</th><th scope="col">Action</th></tr></thead>
+            <tbody>
+              <tr><td>Up arrow (hold)</td><td>Accelerate</td></tr>
+              <tr><td>Down arrow (hold)</td><td>Slow down</td></tr>
+              <tr><td>Slash (hold)</td><td>Brake</td></tr>
+              <tr><td>Left / Right arrow</td><td>Turn 1 degree; hold to keep turning</td></tr>
+              <tr><td>Shift + Left / Right</td><td>Turn 10 degrees; hold to turn faster</td></tr>
+              <tr><td>Control + Left / Right</td><td>Turn onto the next road in that direction</td></tr>
+              <tr><td>R</td><td>Align with the current road</td></tr>
+              <tr><td>H</td><td>Heading</td></tr>
+              <tr><td>S</td><td>Speed</td></tr>
+              <tr><td>L</td><td>Location: street, nearest cross street, area</td></tr>
+              <tr><td>N</td><td>Next intersection along the road: full description the first time, then just the remaining distance (use it as a countdown)</td></tr>
+              <tr><td>Shift + N</td><td>The last intersection behind you</td></tr>
+              <tr><td>Period / Comma</td><td>Step forward / back through the intersections down the road; N returns to the nearest</td></tr>
+              <tr><td>Shift + B</td><td>Toggle intersection proximity beeps</td></tr>
+              <tr><td>W</td><td>What's around: nearest places with clock directions</td></tr>
+              <tr><td>Space</td><td>Sonar sweep: hear nearby places around you</td></tr>
+              <tr><td>Control + D</td><td>Search for a destination (place, address or area)</td></tr>
+              <tr><td>T</td><td>Toggle turn-by-turn directions (otherwise the beacon points straight at the destination)</td></tr>
+              <tr><td>B</td><td>Toggle the destination beacon sound</td></tr>
+              <tr><td>Tab / Shift + Tab</td><td>Browse nearby places</td></tr>
+              <tr><td>Enter</td><td>Set the browsed place as destination (beacon guides you)</td></tr>
+              <tr><td>G</td><td>Destination distance and direction</td></tr>
+              <tr><td>Backspace</td><td>Clear destination</td></tr>
+              <tr><td>1 to 4</td><td>Walker, bicycle, car, helicopter</td></tr>
+              <tr><td>A</td><td>Toggle road assist (lane keeping)</td></tr>
+              <tr><td>P</td><td>Toggle place announcements</td></tr>
+              <tr><td>M</td><td>Toggle map rotation</td></tr>
+              <tr><td>[ and ]</td><td>Review previous / next spoken messages</td></tr>
+              <tr><td>Control</td><td>Stop speech (built-in voice)</td></tr>
+              <tr><td>Page Up / Page Down</td><td>Volume</td></tr>
+              <tr><td>F</td><td>Search for a new location</td></tr>
+              <tr><td>F1 or K</td><td>Spoken help</td></tr>
+              <tr><td>Escape</td><td>Menu</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section aria-labelledby="sounds-h">
+          <h2 id="sounds-h">Sound guide</h2>
+          <ul class="sound-list">
+            <li>Two low falling notes: the road ends ahead (dead end).</li>
+            <li>Quickening beeps: an intersection is coming up; they speed up and rise as you get closer, then the bell plays when you are in it. Lower beeps mean a dead end.</li>
+            <li>Rising chime: intersection ahead, one note per road. Ticking after it: traffic signals.</li>
+            <li>Ding-dong bell: you are at the intersection now, the moment to turn. Short pings follow from the direction of each road you can take, left to right; the highest ping is straight ahead. A soft falling blip means you have left the intersection.</li>
+            <li>Rumble on one side: you are drifting toward that edge of the road. Off road, the rumble comes from where the road is.</li>
+            <li>Click while turning: every 10 degrees. Double chime: north, east, south or west.</li>
+            <li>Place sounds come from the direction of the place: cup clink for food, two-tone chime for transport, bell for culture, water drop for parks, plain tone for shops and services.</li>
+            <li>Beacon ping: your destination. Left or right in your headphones shows which side it is on; pitch shows ahead (high) or behind (low). A second, higher note means you are heading straight at it. It repeats faster as you get closer. With turn-by-turn on, the beacon points a little way along the route, so following it follows the streets.</li>
+            <li>Rising two notes on one side: turn now, toward that side.</li>
+          </ul>
+          <p class="hint">Headphones recommended. Map data © OpenStreetMap contributors.</p>
+        </section>
+      </form>
+    </dialog>
+
+    <dialog id="nav" aria-labelledby="nav-title">
+      <form method="dialog" id="nav-form">
+        <h2 id="nav-title">Navigate to</h2>
+        <p class="hint">Search for a place, address or area. Turn-by-turn directions and a beacon will guide you there. Escape to cancel.</p>
+        <label for="nav-q">Where do you want to go?</label>
+        <div class="inline">
+          <input id="nav-q" type="search" autocomplete="off" placeholder="e.g. cafe, British Museum, Soho" />
+          <button type="button" id="nav-btn">Search</button>
+        </div>
+        <p id="nav-status" class="hint" aria-live="polite"></p>
+        <ul id="nav-results" class="results" aria-label="Destinations"></ul>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,299 @@
+import './style.css';
+import { AudioEngine } from './audio/audio';
+import { Game } from './game';
+import type { LatLon } from './geo';
+import { MapView } from './mapview';
+import { geocode, type GeocodeResult } from './osm';
+import { loadSettings, saveSettings, type Settings } from './settings';
+import { Speech } from './speech';
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+const settings = loadSettings();
+const speech = new Speech(settings.speechMode, settings.voiceRate);
+
+interface Selected extends LatLon {
+  name: string;
+}
+
+const PLACE_KEY = 'audio-map-place';
+let selected: Selected = loadPlace() ?? { name: 'Times Square, New York', lat: 40.758, lon: -73.9855 };
+
+const stage = $<HTMLDivElement>('stage');
+const menu = $<HTMLDialogElement>('menu');
+const startBtn = $<HTMLButtonElement>('start-btn');
+const resumeBtn = $<HTMLButtonElement>('resume-btn');
+
+const map = new MapView($('map'), selected);
+map.headingUp = settings.headingUpMap;
+let game: Game | null = null;
+
+// ---------- settings form ----------
+
+function bindSettings() {
+  for (const name of ['vehicle', 'speechMode'] as const) {
+    for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
+      r.checked = r.value === settings[name];
+      r.addEventListener('change', () => {
+        if (r.checked) update({ [name]: r.value } as Partial<Settings>);
+      });
+    }
+  }
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'] as const) {
+    const el = $<HTMLInputElement>(id);
+    el.checked = settings[id];
+    el.addEventListener('change', () => update({ [id]: el.checked }));
+  }
+  for (const id of ['voiceRate', 'volume'] as const) {
+    const el = $<HTMLInputElement>(id);
+    el.value = String(settings[id]);
+    el.addEventListener('input', () => update({ [id]: parseFloat(el.value) }));
+  }
+  const units = $<HTMLSelectElement>('units');
+  units.value = settings.units;
+  units.addEventListener('change', () => update({ units: units.value as Settings['units'] }));
+}
+
+function update(patch: Partial<Settings>) {
+  Object.assign(settings, patch);
+  saveSettings(settings);
+  speech.configure(settings.speechMode, settings.voiceRate);
+  map.headingUp = settings.headingUpMap;
+  game?.applySettings(settings);
+}
+
+function syncVehicleRadios() {
+  for (const r of document.querySelectorAll<HTMLInputElement>('input[name="vehicle"]')) r.checked = r.value === settings.vehicle;
+}
+
+// ---------- location selection ----------
+
+function select(p: Selected) {
+  selected = p;
+  try {
+    localStorage.setItem(PLACE_KEY, JSON.stringify(p));
+  } catch {
+    // ignore
+  }
+  $('selected-place').textContent = `Selected: ${p.name}`;
+  startBtn.textContent = game ? 'Go there' : 'Start';
+}
+
+function loadPlace(): Selected | null {
+  try {
+    const raw = localStorage.getItem(PLACE_KEY);
+    return raw ? (JSON.parse(raw) as Selected) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function runSearch() {
+  const q = $<HTMLInputElement>('search').value.trim();
+  const status = $('search-status');
+  const list = $<HTMLUListElement>('results');
+  if (!q) return;
+  status.textContent = 'Searching…';
+  list.replaceChildren();
+  let results: GeocodeResult[] = [];
+  try {
+    results = await geocode(q);
+  } catch {
+    status.textContent = 'Search failed. Check your connection and try again.';
+    return;
+  }
+  if (!results.length) {
+    status.textContent = 'No results found.';
+    return;
+  }
+  status.textContent = `${results.length} results. Choose one below.`;
+  for (const r of results) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = r.name;
+    b.addEventListener('click', () => {
+      select({ name: shortName(r.name), lat: r.lat, lon: r.lon });
+      startBtn.focus();
+    });
+    li.appendChild(b);
+    list.appendChild(li);
+  }
+  (list.querySelector('button') as HTMLButtonElement | null)?.focus();
+}
+
+function shortName(full: string) {
+  return full.split(',').slice(0, 3).join(',').trim();
+}
+
+$('search-btn').addEventListener('click', runSearch);
+$<HTMLInputElement>('search').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    void runSearch();
+  }
+});
+
+for (const b of document.querySelectorAll<HTMLButtonElement>('.preset')) {
+  b.addEventListener('click', () => {
+    select({ name: b.textContent!.trim(), lat: parseFloat(b.dataset.lat!), lon: parseFloat(b.dataset.lon!) });
+    startBtn.focus();
+  });
+}
+
+$('geo-btn').addEventListener('click', () => {
+  const status = $('search-status');
+  if (!navigator.geolocation) {
+    status.textContent = 'Location is not available in this browser.';
+    return;
+  }
+  status.textContent = 'Finding your location…';
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      status.textContent = 'Location found.';
+      select({ name: 'My location', lat: pos.coords.latitude, lon: pos.coords.longitude });
+      startBtn.focus();
+    },
+    () => {
+      status.textContent = 'Could not get your location. Permission may have been denied.';
+    },
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+});
+
+// ---------- menu / game flow ----------
+
+function openMenu(focus: 'main' | 'search') {
+  game?.pause();
+  resumeBtn.hidden = !game;
+  startBtn.textContent = game ? 'Go there' : 'Start';
+  syncVehicleRadios();
+  if (!menu.open) menu.showModal();
+  if (focus === 'search') {
+    $<HTMLInputElement>('search').focus();
+  } else {
+    (game ? resumeBtn : startBtn).focus();
+  }
+}
+
+function closeMenu() {
+  if (menu.open) menu.close();
+  if (game) {
+    game.resume();
+    game.focus(stage);
+  }
+}
+
+startBtn.addEventListener('click', () => {
+  if (!game) {
+    const audio = new AudioEngine(settings.volume); // created on a user gesture so the browser allows sound
+    game = new Game(settings, speech, audio, map);
+    game.onMenu = openMenu;
+    game.onNavigate = openNav;
+    game.onHud = (h) => {
+      $('hud-street').textContent = h.street || '—';
+      $('hud-speed').textContent = h.speed;
+      $('hud-heading').textContent = h.heading;
+      $('hud-area').textContent = h.area;
+      const dest = $('hud-dest');
+      dest.hidden = !h.destination;
+      dest.textContent = h.destination ? `→ ${h.destination}` : '';
+      $('hud-status').textContent = h.status;
+    };
+  }
+  if (menu.open) menu.close();
+  game.focus(stage);
+  void game.start(selected, selected.name);
+});
+
+resumeBtn.addEventListener('click', closeMenu);
+
+menu.addEventListener('cancel', (e) => {
+  // Escape inside the menu resumes the game; before the first start there is nothing to resume.
+  e.preventDefault();
+  if (game) closeMenu();
+});
+
+// ---------- destination search (beacon) ----------
+
+const nav = $<HTMLDialogElement>('nav');
+
+function openNav() {
+  if (!game) return;
+  game.pause();
+  $('nav-status').textContent = '';
+  $<HTMLUListElement>('nav-results').replaceChildren();
+  if (!nav.open) nav.showModal();
+  const q = $<HTMLInputElement>('nav-q');
+  q.select();
+  q.focus();
+}
+
+function closeNav() {
+  if (nav.open) nav.close();
+  if (game) {
+    game.resume();
+    game.focus(stage);
+  }
+}
+
+function pickDestination(name: string, lat: number, lon: number, radius: number) {
+  closeNav();
+  game?.setTargetLatLon(name, lat, lon, radius);
+}
+
+async function runNavSearch() {
+  if (!game) return;
+  const q = $<HTMLInputElement>('nav-q').value.trim();
+  if (!q) return;
+  const status = $('nav-status');
+  const list = $<HTMLUListElement>('nav-results');
+  list.replaceChildren();
+  const add = (label: string, onPick: () => void) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.addEventListener('click', onPick);
+    li.appendChild(b);
+    list.appendChild(li);
+  };
+  // places already loaded around you come first, then a wider search biased toward where you are
+  for (const m of game.findPlaces(q)) add(`${m.name}, ${m.detail}`, () => pickDestination(m.name, m.lat, m.lon, 0));
+  status.textContent = 'Searching…';
+  try {
+    for (const r of await geocode(q, game.position ?? undefined)) {
+      const name = shortName(r.name);
+      add(`${name}, ${game.describeFromHere(r.lat, r.lon)}`, () => pickDestination(name, r.lat, r.lon, r.radius));
+    }
+  } catch {
+    // keep any nearby matches
+  }
+  const n = list.children.length;
+  status.textContent = n ? `${n} results. Choose one to navigate there.` : 'No results found.';
+  (list.querySelector('button') as HTMLButtonElement | null)?.focus();
+}
+
+$('nav-btn').addEventListener('click', runNavSearch);
+$<HTMLInputElement>('nav-q').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    void runNavSearch();
+  }
+});
+nav.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeNav();
+});
+
+$('menu-btn').addEventListener('click', () => openMenu('main'));
+
+stage.addEventListener('focus', () => {
+  if (game && !menu.open) game.focus(stage);
+});
+
+window.addEventListener('resize', () => map.resize());
+
+bindSettings();
+select(selected);
+openMenu('main');
