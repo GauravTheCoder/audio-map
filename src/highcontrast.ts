@@ -1,4 +1,4 @@
-// Low-vision restyle of the base map: a dark, high-contrast map with wide, bright roads and large
+// High-contrast restyle of the base map: a dark, high-contrast map with wide, bright roads and large
 // labels. Applied to the loaded style in place, layer by layer, so it follows the style's own
 // zoom-dependent widths and sizes (just scaled up).
 
@@ -33,7 +33,7 @@ function roadColor(id: string): string {
   return MINOR;
 }
 
-export function applyLowVision(map: MlMap) {
+export function applyHighContrast(map: MlMap) {
   const style = map.getStyle();
   for (const layer of style.layers) {
     const id = layer.id;

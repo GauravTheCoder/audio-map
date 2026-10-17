@@ -1,8 +1,8 @@
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
 export type VehicleId = 'walker' | 'bicycle' | 'car' | 'helicopter';
-/** default look, or high contrast with larger text, roads and markers */
-export type DisplayMode = 'default' | 'lowVision';
+/** high contrast with larger text, roads and markers (the default), or the standard map look */
+export type DisplayMode = 'highContrast' | 'standard';
 
 export interface Settings {
   vehicle: VehicleId;
@@ -36,7 +36,7 @@ const DEFAULTS: Settings = {
   turnByTurn: true,
   beaconSound: true,
   headingUpMap: true,
-  display: 'default',
+  display: 'highContrast',
   volume: 0.8,
 };
 
@@ -45,7 +45,12 @@ const KEY = 'audio-map-settings';
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+    if (raw) {
+      const s = { ...DEFAULTS, ...JSON.parse(raw) } as Settings;
+      // earlier names: 'default' (never chosen, just the old default) and 'lowVision'
+      if (s.display !== 'standard') s.display = 'highContrast';
+      return s;
+    }
   } catch {
     // storage unavailable: fall through to defaults
   }

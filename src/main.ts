@@ -25,7 +25,7 @@ const startBtn = $<HTMLButtonElement>('start-btn');
 const resumeBtn = $<HTMLButtonElement>('resume-btn');
 
 applyDisplay();
-const map = new MapView($('map'), selected, settings.display === 'lowVision');
+const map = new MapView($('map'), selected, settings.display === 'highContrast');
 map.headingUp = settings.headingUpMap;
 let game: Game | null = null;
 
@@ -61,13 +61,13 @@ function update(patch: Partial<Settings>) {
   speech.configure(settings.speechMode, settings.voiceRate);
   map.headingUp = settings.headingUpMap;
   applyDisplay();
-  map.setLowVision(settings.display === 'lowVision');
+  map.setHighContrast(settings.display === 'highContrast');
   game?.applySettings(settings);
 }
 
-/** Low vision mode restyles the whole page (larger text, high contrast) through a root attribute. */
+/** High contrast mode restyles the whole page (larger text, high contrast) through a root attribute. */
 function applyDisplay() {
-  if (settings.display === 'lowVision') document.documentElement.dataset.display = 'low-vision';
+  if (settings.display === 'highContrast') document.documentElement.dataset.display = 'high-contrast';
   else delete document.documentElement.dataset.display;
 }
 
