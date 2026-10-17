@@ -183,8 +183,8 @@ export class AudioEngine {
     o.stop(when + dur + 0.05);
   }
 
-  /** A node positioned around the listener. rel: degrees clockwise from ahead. Sounds behind are muffled. */
-  spatial(rel: number, level: number): AudioNode {
+  /** A node positioned around the listener. rel: degrees clockwise from ahead. Sounds behind are muffled; far (0 near .. 1 at the edge of range) dulls them too. */
+  spatial(rel: number, level: number, far = 0): AudioNode {
     const ctx = this.ctx;
     const rad = (rel * Math.PI) / 180;
     const p = ctx.createPanner();
@@ -197,7 +197,7 @@ export class AudioEngine {
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     const behind = Math.max(0, -Math.cos(rad)); // 0 ahead .. 1 directly behind
-    lp.frequency.value = 12000 - behind * 10000;
+    lp.frequency.value = (12000 - behind * 10000) * (1 - 0.7 * far);
     const g = ctx.createGain();
     g.gain.value = level;
     g.connect(lp).connect(p).connect(this.master);
@@ -226,8 +226,30 @@ export class AudioEngine {
     }
   }
 
-  placeCue(group: PlaceGroup, rel: number, level = 0.25, when = this.now) {
-    const dest = this.spatial(rel, level);
+  /** Warning earcon for a hazard ahead (~0.5 s, so speech follows it). closeness 0 far .. 1 at the hazard. */
+  hazardCue(kind: string, rel: number, closeness: number) {
+    const t = this.now;
+    const dest = this.spatial(rel, 0.12 + 0.12 * closeness);
+    switch (kind) {
+      case 'Steps': // rising stair-step
+        [392, 494, 587, 740].forEach((f, i) => this.tone(f, { when: t + i * 0.08, dur: 0.1, dest, type: 'square', level: 0.35 }));
+        break;
+      case 'Railway crossing': // low repeating ding
+        for (let i = 0; i < 3; i++) this.tone(660, { when: t + i * 0.2, dur: 0.18, dest, type: 'sine', level: 0.7 });
+        break;
+      case 'Crossing with signals': // two pulses with a signal tick between
+        this.tone(880, { when: t, dur: 0.07, dest, type: 'square', level: 0.3 });
+        this.noiseBurst(dest, t + 0.1, 0.03, 2200, 8, 0.5);
+        this.tone(880, { when: t + 0.2, dur: 0.07, dest, type: 'square', level: 0.3 });
+        break;
+      default: // pedestrian crossing: urgent two-pulse
+        this.tone(880, { when: t, dur: 0.07, dest, type: 'square', level: 0.3 });
+        this.tone(880, { when: t + 0.12, dur: 0.07, dest, type: 'square', level: 0.3 });
+    }
+  }
+
+  placeCue(group: PlaceGroup, rel: number, level = 0.25, when = this.now, far = 0) {
+    const dest = this.spatial(rel, level, far);
     const f = GROUP_PITCH[group];
     switch (group) {
       case 'food': // cup clink

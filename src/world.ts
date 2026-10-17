@@ -1,6 +1,6 @@
 // The explorable world: road graph, spatial indexes and named places in local metres.
 
-import { Projection, bearing, dist, pointSeg, relAngle, type SegHit } from './geo';
+import { Projection, bearing, dist, pointSeg, relAngle, type LatLon, type SegHit } from './geo';
 import type { RawPlaces, RawRoads } from './osm';
 
 export interface Way {
@@ -69,6 +69,13 @@ export interface Place {
   category: string;
   /** coarse group used for sound choice */
   group: PlaceGroup;
+  x: number;
+  y: number;
+}
+
+/** Something to warn about when walking towards it. */
+export interface Hazard {
+  text: string;
   x: number;
   y: number;
 }
@@ -177,6 +184,7 @@ export class World {
   private segGrid = new Grid<Segment>(60);
   private nodeGrid = new Grid<GNode>(80);
   private placeGrid = new Grid<Place>(100);
+  private hazardGrid = new Grid<Hazard>(50);
   /** the loaded area in local metres, if known */
   private bounds: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
 
@@ -237,7 +245,26 @@ export class World {
         }
         prev = n;
       }
+      if (type === 'steps') for (const nid of [rw.nodes[0], rw.nodes[rw.nodes.length - 1]]) this.addHazard('Steps', raw.nodes.get(nid));
     }
+  }
+
+  private addHazard(text: string, ll?: LatLon) {
+    if (!ll) return;
+    const p = this.proj.toXY(ll.lat, ll.lon);
+    // crossings are often mapped on each side of the road
+    for (const h of this.hazardGrid.query(p.x, p.y, 12)) if (h.text === text && dist(h.x, h.y, p.x, p.y) < 12) return;
+    const h = { text, x: p.x, y: p.y };
+    this.hazardGrid.insertBox(h, p.x, p.y, p.x, p.y);
+  }
+
+  hazardsNear(x: number, y: number, r: number): { hazard: Hazard; d: number }[] {
+    const out: { hazard: Hazard; d: number }[] = [];
+    for (const h of this.hazardGrid.query(x, y, r)) {
+      const d = dist(x, y, h.x, h.y);
+      if (d <= r) out.push({ hazard: h, d });
+    }
+    return out.sort((a, b) => a.d - b.d);
   }
 
   /** Places arrive separately from roads so travel can start sooner. */
@@ -249,6 +276,7 @@ export class World {
       n.signals = true;
       for (const m of this.nodesNear(n.x, n.y, 30)) if (m.edges.length >= 3) m.signals = true;
     }
+    for (const c of raw.crossings ?? []) this.addHazard(c.text, c);
     const proj = this.proj;
     const seen = new Set<string>();
     for (const rp of raw.places) {

@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Explore real city streets by sound and keyboard. Built for blind and low-vision travellers." />
+    <meta name="theme-color" content="#000000" />
+    <link rel="manifest" href="./manifest.webmanifest" />
     <title>Audio Map Explorer</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>" />
   </head>
@@ -74,6 +76,30 @@
         </fieldset>
 
         <fieldset>
+          <legend>Sound profile (Shift + P to switch)</legend>
+          <label><input type="radio" name="soundProfile" value="simple" /> Simple: fewer places and side streets as you go faster (a car hears landmarks and main roads, a walker hears most things)</label>
+          <button type="button" class="preview" data-profile="simple">Preview</button>
+          <label><input type="radio" name="soundProfile" value="full" /> Full: every place and intersection, with beeps and compass ticks</label>
+          <button type="button" class="preview" data-profile="full">Preview</button>
+          <label><input type="radio" name="soundProfile" value="minimal" /> Minimal: landmarks and main roads only</label>
+          <button type="button" class="preview" data-profile="minimal">Preview</button>
+          <label><input type="radio" name="soundProfile" value="custom" /> Custom: choose below</label>
+          <button type="button" class="preview" data-profile="custom">Preview</button>
+          <div class="indent" id="custom-sound">
+            <label class="select">Places while moving
+              <select id="customPlaces">
+                <option value="all">All places</option>
+                <option value="notable">Notable places and up</option>
+                <option value="landmarks">Landmarks only</option>
+                <option value="none">None</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="customSideStreets" /> Announce side-street intersections</label>
+            <label><input type="checkbox" id="customExtras" /> Intersection beeps and compass ticks</label>
+          </div>
+        </fieldset>
+
+        <fieldset>
           <legend>Walking routes (D twice to switch)</legend>
           <label><input type="radio" name="walkRoute" value="shortest" /> Shortest: may use footpaths, alleys and paths through parks</label>
           <label><input type="radio" name="walkRoute" value="streets" /> Streets only: along streets and their pavements</label>
@@ -90,6 +116,7 @@
           <legend>Announcements and sound</legend>
           <label><input type="checkbox" id="announceStreets" /> Announce street names</label>
           <label><input type="checkbox" id="announcePlaces" /> Announce places I pass</label>
+          <label><input type="checkbox" id="announceHazards" /> Warn of crossings and steps ahead (walker and bicycle)</label>
           <label><input type="checkbox" id="announceHeadingAfterTurn" /> Announce heading after turning</label>
           <label><input type="checkbox" id="roadAssist" /> Road assist: gently follow the road while not turning (key A)</label>
           <label><input type="checkbox" id="turnByTurn" /> Turn-by-turn directions to the destination (key T)</label>
@@ -106,10 +133,34 @@
           </label>
         </fieldset>
 
+        <fieldset>
+          <legend>Place sounds</legend>
+          <label><input type="checkbox" data-group="food" /> Food and drink</label>
+          <label><input type="checkbox" data-group="shop" /> Shops</label>
+          <label><input type="checkbox" data-group="transport" /> Transport</label>
+          <label><input type="checkbox" data-group="culture" /> Culture</label>
+          <label><input type="checkbox" data-group="nature" /> Parks and nature</label>
+          <label><input type="checkbox" data-group="health" /> Health</label>
+          <label><input type="checkbox" data-group="service" /> Services</label>
+          <label><input type="checkbox" data-group="other" /> Other</label>
+        </fieldset>
+
         <div class="actions">
           <button type="button" id="start-btn" class="primary">Start</button>
           <button type="button" id="resume-btn" hidden>Resume</button>
+          <button type="button" id="learn-btn">Learn the keys</button>
+          <button type="button" id="saved-btn">Saved places and notes</button>
         </div>
+
+        <section aria-labelledby="backup-h">
+          <h2 id="backup-h">Your data</h2>
+          <div class="actions">
+            <button type="button" id="export-btn">Export my data</button>
+            <label for="import-file">Import data (JSON file)</label>
+            <input type="file" id="import-file" accept="application/json,.json" />
+          </div>
+          <p id="backup-status" class="hint" aria-live="polite"></p>
+        </section>
 
         <section aria-labelledby="keys-h">
           <h2 id="keys-h">Keyboard commands</h2>
@@ -134,8 +185,11 @@
               <tr><td>Period / Comma</td><td>Step forward / back through the intersections down the road; N returns to the nearest</td></tr>
               <tr><td>Shift + B</td><td>Toggle intersection proximity beeps</td></tr>
               <tr><td>W</td><td>What's around: nearest places with clock directions</td></tr>
+              <tr><td>Shift+W</td><td>Conditions: temperature, weather, wind, daylight and sunset</td></tr>
               <tr><td>Space</td><td>Sonar sweep: hear nearby places around you</td></tr>
               <tr><td>Control + J</td><td>Jump to a place or address: you are moved there (keeping any destination), e.g. to learn a route from A to B</td></tr>
+              <tr><td>Shift + Q</td><td>Save this trip (where you are to your destination) as a named route</td></tr>
+              <tr><td>Q</td><td>Saved routes: choose one to jump to its start with the destination set, or remove it</td></tr>
               <tr><td>Control + D</td><td>Search for a destination (place, address or area)</td></tr>
               <tr><td>D</td><td>Distance to go along the route, estimated time, and straight-line distance</td></tr>
               <tr><td>D twice</td><td>Switch walking routes between shortest (may use footpaths) and streets only</td></tr>
@@ -146,15 +200,26 @@
               <tr><td>Enter</td><td>Set the browsed place as destination (beacon guides you)</td></tr>
               <tr><td>G</td><td>Destination distance and direction</td></tr>
               <tr><td>Backspace</td><td>Clear destination</td></tr>
+              <tr><td>C</td><td>Show only one kind of place (food, shops, transport, health, culture, parks, services) in W, Space and Tab; press again to cycle, back to all</td></tr>
+              <tr><td>V</td><td>Leave a spoken note at this spot; you hear it when you pass again. Shift + V deletes the note you are at</td></tr>
+              <tr><td>Z</td><td>Copy a link to this spot and your destination, to open on another device</td></tr>
+              <tr><td>U</td><td>Trip summary: distance, time and streets so far, or the last trip once you have arrived</td></tr>
+              <tr><td>E</td><td>Where am I: street, area, nearest landmark and nearest bus stop or station</td></tr>
+              <tr><td>O</td><td>Preview the whole route: length, time and the first turns</td></tr>
+              <tr><td>X</td><td>Set the nearest bus stop or station as destination; press again for the next nearest</td></tr>
+              <tr><td>Y</td><td>Save the destination, or where you are, as a saved place. Control D and Control J list saved places before you type</td></tr>
               <tr><td>1 to 4</td><td>Walker, bicycle, car, helicopter</td></tr>
               <tr><td>A</td><td>Toggle road assist (lane keeping: follows bends and goes round roundabouts; you make the turns)</td></tr>
               <tr><td>P</td><td>Toggle place announcements</td></tr>
+              <tr><td>Shift + P</td><td>Switch sound profile: full, simple, minimal or custom</td></tr>
               <tr><td>M</td><td>Toggle map rotation</td></tr>
               <tr><td>[ and ]</td><td>Review previous / next spoken messages</td></tr>
               <tr><td>Control</td><td>Stop speech (built-in voice)</td></tr>
               <tr><td>Page Up / Page Down</td><td>Volume</td></tr>
               <tr><td>F</td><td>Search for a new location</td></tr>
               <tr><td>Control + comma</td><td>Settings (display mode and more)</td></tr>
+              <tr><td>F2</td><td>Command palette: type to search every action, Up / Down to choose, Enter to run</td></tr>
+              <tr><td>Shift + F1</td><td>Learn the keys: guided practice on the map. Backslash skips a step, Delete exits</td></tr>
               <tr><td>F1 or K</td><td>Spoken help</td></tr>
               <tr><td>Escape</td><td>Menu</td></tr>
             </tbody>
@@ -195,6 +260,55 @@
         </div>
         <p id="nav-status" class="hint" aria-live="polite"></p>
         <ul id="nav-results" class="results" aria-label="Destinations"></ul>
+      </form>
+    </dialog>
+
+    <dialog id="palette" aria-labelledby="palette-title">
+      <form method="dialog" id="palette-form">
+        <h2 id="palette-title">Command palette</h2>
+        <label for="palette-q">Search actions. Up and Down choose, Enter runs, Escape closes.</label>
+        <input id="palette-q" type="search" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" />
+        <p id="palette-status" class="hint" aria-live="polite"></p>
+        <ul id="palette-list" class="results" role="listbox" aria-label="Actions"></ul>
+      </form>
+    </dialog>
+
+    <dialog id="saved" aria-labelledby="saved-title">
+      <form method="dialog" id="saved-form">
+        <h2 id="saved-title">Saved places and notes</h2>
+        <p class="hint">Edit a name or note, then press Save. Escape to close.</p>
+        <p id="saved-status" class="hint" aria-live="polite"></p>
+        <h3 id="saved-places-h">Saved places</h3>
+        <ul id="saved-places" class="results" aria-labelledby="saved-places-h"></ul>
+        <h3 id="saved-notes-h">Spot notes</h3>
+        <ul id="saved-notes" class="results" aria-labelledby="saved-notes-h"></ul>
+        <button type="button" id="saved-close">Close</button>
+      </form>
+    </dialog>
+
+    <dialog id="note" aria-labelledby="note-title">
+      <form method="dialog" id="note-form">
+        <h2 id="note-title">Note for this spot</h2>
+        <p class="hint">You will hear it whenever you pass within 25 metres. Escape to cancel.</p>
+        <label for="note-text">What should the note say?</label>
+        <div class="inline">
+          <input id="note-text" type="text" autocomplete="off" placeholder="e.g. steep kerb, door on the left" />
+          <button type="submit" id="note-save">Save note</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="routes" aria-labelledby="routes-title">
+      <form method="dialog" id="routes-form">
+        <h2 id="routes-title">Saved routes</h2>
+        <p class="hint" id="routes-status" aria-live="polite"></p>
+        <div id="routes-save" hidden>
+          <label for="routes-name">Route name</label>
+          <input id="routes-name" type="text" autocomplete="off" />
+          <button type="button" id="routes-save-btn">Save</button>
+        </div>
+        <ul id="routes-list" class="results" aria-label="Saved routes"></ul>
+        <button type="button" id="routes-close">Close</button>
       </form>
     </dialog>
 

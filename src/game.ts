@@ -6,15 +6,34 @@ import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
+import { addFavorite } from './favorites';
+import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
+import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
-import { World, type Edge, type GNode, type Junction, type Place, type RoadHit, type Way } from './world';
+import { conditionsReport } from './weather';
+import { World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
 /** distances (m) at which progress toward the destination is spoken */
+function minutesText(minutes: number): string {
+  return minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+}
+
+const FILTER_NAMES: Record<PlaceGroup, string> = {
+  food: 'food and drink',
+  shop: 'shops',
+  transport: 'transport',
+  culture: 'culture',
+  nature: 'parks and nature',
+  health: 'health',
+  service: 'services',
+  other: 'other places',
+};
+const FILTERS: (PlaceGroup | null)[] = [null, 'food', 'shop', 'transport', 'health', 'culture', 'nature', 'service'];
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
 
 const CAR_ROADS =
@@ -143,6 +162,7 @@ export class Game {
   private ahead: Ahead | null = null;
   private announcedNodes = new Map<number, number>();
   private announcedPlaces = new Map<string, number>();
+  private announcedHazards = new Map<string, number>();
   private nextPlaceCheck = 0;
   private nextAheadCheck = 0;
   /** member nodes of the junction the traveller is standing in, if any */
@@ -199,6 +219,10 @@ export class Game {
   private routeReq = 0;
   private routePending = false;
   private destMilestone = Infinity;
+  private trip: { t0: number; meters: number; streets: string[] } | null = null;
+  private lastTrip = '';
+  private notes: { x: number; y: number; text: string }[] = [];
+  private placeFilter: PlaceGroup | null = null;
   private browse: { list: Place[]; idx: number; x: number; y: number } | null = null;
 
   private nextHud = 0;
@@ -209,6 +233,11 @@ export class Game {
   onMenu?: (focus: 'main' | 'search' | 'settings') => void;
   onNavigate?: () => void;
   onJump?: () => void;
+  onNote?: () => void;
+  /** sees every key first; returning true consumes it */
+  onKey?: (c: Command) => boolean;
+  onSaveRoute?: () => void;
+  onRoutes?: () => void;
 
   constructor(
     private settings: Settings,
@@ -227,6 +256,7 @@ export class Game {
   async start(center: LatLon, placeName?: string) {
     this.loadAbort?.abort();
     this.proj = new Projection(center);
+    this.loadNotes();
     this.x = 0;
     this.y = 0;
     this.speed = 0;
@@ -234,9 +264,11 @@ export class Game {
     this.road = null;
     this.streetName = null;
     this.dest = null;
+    this.trip = null;
     this.browse = null;
     this.announcedNodes.clear();
     this.announcedPlaces.clear();
+    this.announcedHazards.clear();
     this.inJunction = null;
     this.ring = null;
     this.announcedBends.clear();
@@ -454,6 +486,12 @@ export class Game {
     el.focus();
   }
 
+  /** Runs a key command as if typed (used by the F2 command palette). */
+  run(key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) {
+    const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : key;
+    this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
+  }
+
   pause() {
     this.paused = true;
     this.speed = 0;
@@ -484,6 +522,8 @@ export class Game {
     const prevRadius = this.vehicle.loadRadius;
     this.vehicle = VEHICLES[id];
     this.settings.vehicle = id;
+    const before = this.settings.soundProfile;
+    this.settings.soundProfile = this.settings.vehicleProfiles[id] ?? before;
     saveSettings(this.settings);
     this.speed = Math.min(this.speed, this.vehicle.maxSpeed);
     this.audio.setVehicle(id);
@@ -493,7 +533,7 @@ export class Game {
     }
     this.announcedNodes.clear();
     if (announce) {
-      this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.vehicle.maxSpeed, this.settings.units)}.`, 'high');
+      this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.vehicle.maxSpeed, this.settings.units)}.${this.settings.soundProfile === before ? '' : ` ${PROFILE_TEXT[this.settings.soundProfile]}`}`, 'high');
     }
     if (this.proj && this.vehicle.loadRadius > prevRadius && !this.loading) void this.load(false);
   }
@@ -567,6 +607,7 @@ export class Game {
 
     // --- move ---
     const r = (this.heading * Math.PI) / 180;
+    if (this.trip) this.trip.meters += this.speed * dt;
     this.x += Math.sin(r) * this.speed * dt;
     this.y += Math.cos(r) * this.speed * dt;
 
@@ -587,6 +628,8 @@ export class Game {
     if (this.clock > this.nextPlaceCheck) {
       this.nextPlaceCheck = this.clock + 0.25;
       this.checkPlaces();
+      this.checkHazards();
+      this.checkNotes();
     }
     this.updateDestination();
 
@@ -659,7 +702,7 @@ export class Game {
     this.heading = normDeg(this.heading + deg);
     this.lastManualTurn = this.clock;
     this.turnedDuringHold = true;
-    if (!this.settings.compassTicks) return;
+    if (!this.settings.compassTicks || !extrasWanted(this.settings, this.vehicle.id)) return;
     const a = Math.floor(before / 10);
     const b = Math.floor(this.heading / 10);
     if (a !== b) {
@@ -706,6 +749,8 @@ export class Game {
     }
     if (this.candName !== this.streetName && this.clock - this.candSince > 0.6) {
       this.streetName = this.candName;
+      const ts = this.trip?.streets;
+      if (ts && this.streetName && ts[ts.length - 1] !== this.streetName) ts.push(this.streetName);
       // entering a roundabout is announced with its exits instead
       if (this.streetName && this.settings.announceStreets && this.streetName !== ringName) {
         const extras: string[] = [];
@@ -815,6 +860,7 @@ export class Game {
       this.speech.say(`Here: ${this.stepWithThen(turn)}.`, 'high');
       return;
     }
+    if (!ringNode && junctionQuiet(this.settings, this.vehicle.id, j)) return;
     if (this.route && this.offRouteSince < 0 && !ringNode) this.audio.routePassIntersection(this.exitAngles(j));
     else this.audio.atIntersection(this.exitAngles(j));
     // the moment to decide: name every road and which way it goes from here
@@ -936,6 +982,7 @@ export class Game {
     }
     const j = this.world!.junction(a.node, this.filter, this.junctionRadius);
     for (const m of j.nodes) this.announcedNodes.set(m.id, this.clock); // one announcement per junction
+    if (junctionQuiet(this.settings, this.vehicle.id, j)) return;
     const branches = this.junctionBranches(a.node, a.arrival, a.arriveName, false);
     if (!branches) return;
     this.audio.intersectionChime(j.exits.length, j.signals);
@@ -1288,16 +1335,36 @@ export class Game {
     return parts.join('; ');
   }
 
+  /** Crossings and steps just ahead, for walkers and cyclists. */
+  private checkHazards() {
+    if (!this.settings.announceHazards || this.speed < 0.3 || (this.vehicle.id !== 'walker' && this.vehicle.id !== 'bicycle')) return;
+    const reach = this.vehicle.id === 'walker' ? 30 : 45;
+    for (const { hazard: h, d } of this.world!.hazardsNear(this.x, this.y, reach)) {
+      if (Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y))) > 35) continue;
+      if (h.text === 'Steps' && this.road?.type === 'steps') continue;
+      const key = `${h.text}|${Math.round(h.x)},${Math.round(h.y)}`;
+      if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
+      this.announcedHazards.set(key, this.clock);
+      this.audio.hazardCue(h.text, relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y)), 1 - Math.min(1, d / reach));
+      this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}`, 'high');
+      break;
+    }
+  }
+
   private checkPlaces() {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
-    if (this.clock - this.lastPlaceSpoken < 1.2) return;
+    // faster vehicles pass places quicker, so leave longer between cues
+    if (this.clock - this.lastPlaceSpoken < 1.2 + Math.min(2.8, this.speed / 6)) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
+      if (!placeWanted(this.settings, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
       if (this.clock - last < 180) continue;
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
       if (Math.abs(rel) > 120 && d > 10) continue; // already passed it
       this.announcedPlaces.set(place.id, this.clock);
-      this.audio.placeCue(place.group, rel, 0.2);
+      // nearer is louder and clearer; landmarks stand out over everyday places
+      const far = Math.min(1, d / this.vehicle.passRadius);
+      this.audio.placeCue(place.group, rel, (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1), undefined, far);
       this.speech.say(`${place.name}, ${place.category}, ${sideWord(rel)}${d > 15 ? `, ${fmtDistance(d, this.settings.units)}` : ''}`, 'low');
       this.lastPlaceSpoken = this.clock;
       break;
@@ -1313,7 +1380,10 @@ export class Game {
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     if (d < Math.max(this.arriveRadius, this.dest.radius ?? 0)) {
       this.audio.arrival();
-      this.speech.say(`Arrived at ${this.dest.name}.`, 'high');
+      const done = this.trip ? ` Trip: ${this.tripText(this.trip)}. Press U to hear it again.` : '';
+      this.lastTrip = this.trip ? `Last trip to ${this.dest.name}: ${this.tripText(this.trip)}.` : '';
+      this.speech.say(`Arrived at ${this.dest.name}.${done}`, 'high');
+      this.trip = null;
       this.dest = null;
       this.map.setDestination(null);
       this.clearRoute();
@@ -1831,6 +1901,7 @@ export class Game {
   // ---------------- keyboard ----------------
 
   private command(c: Command): boolean | void {
+    if (this.onKey?.(c)) return;
     if (!this.world && c.key !== 'Escape' && c.key !== 'F1') {
       if (!c.repeat) this.speech.say(this.loading ? 'Still loading map data.' : 'No map loaded. Press Escape for the menu.', 'high');
       return;
@@ -1901,8 +1972,14 @@ export class Game {
         return this.toggleTurnByTurn();
       case 'i':
         return this.instructions();
-      case 'w':
-        return this.whatsAround();
+      case 'w': {
+        if (!c.shift) return this.whatsAround();
+        const at = this.position;
+        if (!at) return;
+        this.speech.say('Checking conditions.', 'low');
+        void conditionsReport(at, this.settings.units).then((t) => this.speech.say(t, 'high'));
+        return;
+      }
       case ' ':
         return this.sonar();
       case 'Tab':
@@ -1913,6 +1990,23 @@ export class Game {
         return c.shift ? this.clearDestination() : this.destinationInfo();
       case 'Backspace':
         return this.clearDestination();
+      case 'c':
+        return this.cycleFilter();
+      case 'v':
+        if (c.shift) return this.deleteNote();
+        return this.onNote?.();
+      case 'z':
+        return void this.shareLink();
+      case 'u':
+        return this.tripSummary();
+      case 'e':
+        return void this.whereAmI();
+      case 'o':
+        return this.routePreview();
+      case 'x':
+        return this.nearestTransit();
+      case 'y':
+        return this.saveFavorite();
       case 'r':
         return this.alignToRoad();
       case 'f':
@@ -1921,6 +2015,8 @@ export class Game {
       case 'j':
         if (c.ctrl) this.onJump?.();
         return;
+      case 'q':
+        return c.shift ? this.onSaveRoute?.() : this.onRoutes?.();
       case 'd': {
         if (c.ctrl) return this.onNavigate?.();
         // pressed twice quickly: switch walking routes between shortest and streets only
@@ -1939,6 +2035,12 @@ export class Game {
         saveSettings(this.settings);
         return this.speech.say(`Road assist ${this.settings.roadAssist ? 'on' : 'off'}.`, 'high');
       case 'p':
+        if (c.shift) {
+          this.settings.soundProfile = nextProfile(this.settings.soundProfile);
+          this.settings.vehicleProfiles = { ...this.settings.vehicleProfiles, [this.vehicle.id]: this.settings.soundProfile };
+          saveSettings(this.settings);
+          return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
+        }
         this.settings.announcePlaces = !this.settings.announcePlaces;
         saveSettings(this.settings);
         return this.speech.say(`Place announcements ${this.settings.announcePlaces ? 'on' : 'off'}.`, 'high');
@@ -1981,15 +2083,15 @@ export class Game {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
-        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
-        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
+        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
   }
 
-  private locationText(): string {
+  private locationText(area = this.areaName): string {
     const parts: string[] = [];
     if (this.streetName) {
       let s = `On ${this.streetName}`;
@@ -2005,7 +2107,7 @@ export class Game {
       );
     }
     parts.push(`facing ${compass8(this.heading)}`);
-    if (this.areaName) parts.push(this.areaName);
+    if (area) parts.push(area);
     return parts.join('. ') + '.';
   }
 
@@ -2353,7 +2455,7 @@ export class Game {
   /** Parking-sensor style beeps that quicken as the next intersection approaches. */
   private updateProximityBeeps() {
     const a = this.ahead;
-    if (!this.settings.proximityBeeps || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
+    if (!this.settings.proximityBeeps || !extrasWanted(this.settings, this.vehicle.id) || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
     const base = this.vehicle.id === 'walker' ? 25 : this.vehicle.id === 'bicycle' ? 35 : 40;
     const range = Math.min(120, Math.max(base, this.speed * 3));
     const d = a.forward - this.speed * (this.clock - this.aheadAt); // ahead is refreshed every 0.1 s
@@ -2364,9 +2466,57 @@ export class Game {
     this.nextProxBeep = this.clock + 0.1 + 0.8 * (1 - closeness);
   }
 
+  /** X: set the nearest bus stop or station as destination; again for the next nearest of five. */
+  private nearestTransit() {
+    const stops = this.transitStops().slice(0, 5);
+    if (!stops.length) return this.speech.say('No bus stops or stations on the loaded map.', 'high');
+    const cur = this.dest ? stops.findIndex(({ p }) => p.x === this.dest!.x && p.y === this.dest!.y) : -1;
+    const { p } = stops[(cur + 1) % stops.length];
+    this.setTarget({ name: p.name, x: p.x, y: p.y });
+  }
+
+  private transitStops() {
+    return this.world!.places
+      .filter((p) => p.category === 'bus stop' || p.category === 'station' || p.category === 'bus station')
+      .map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }))
+      .sort((a, b) => a.d - b.d);
+  }
+
+  /** E: everything for when you are lost: street, area, nearest landmark and nearest transit stop. */
+  private async whereAmI() {
+    const u = this.settings.units;
+    const at = (p: Place) => `${p.name}, ${p.category}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y)))}`;
+    const near = this.world!.placesNear(this.x, this.y, 400);
+    const landmark = (near.find((n) => placeTier(n.place) >= 1) ?? near[0])?.place;
+    const stop = this.transitStops()[0]?.p;
+    const here = this.position;
+    const area = here ? await Promise.race([reverseGeocode(here), new Promise<null>((r) => setTimeout(r, 2500))]) : null;
+    const parts = [this.locationText(area ?? this.areaName)];
+    if (landmark) parts.push(`Nearest landmark: ${at(landmark)}.`);
+    if (stop) parts.push(`Nearest ${stop.category}: ${at(stop)}.`);
+    this.speech.say(parts.join(' '), 'high');
+  }
+
+  private nearby(r: number) {
+    const all = this.world!.placesNear(this.x, this.y, r);
+    return this.placeFilter ? all.filter((p) => p.place.group === this.placeFilter) : all;
+  }
+
+  private filterLabel() {
+    return this.placeFilter ? `${FILTER_NAMES[this.placeFilter]} ` : '';
+  }
+
+  /** C: show only one kind of place in W, Space and Tab, cycling through the kinds and back to all. */
+  private cycleFilter() {
+    const i = FILTERS.indexOf(this.placeFilter);
+    this.placeFilter = FILTERS[(i + 1) % FILTERS.length];
+    this.browse = null;
+    this.speech.say(this.placeFilter ? `Showing only ${FILTER_NAMES[this.placeFilter]}.` : 'Showing all places.', 'high');
+  }
+
   private whatsAround() {
-    const list = this.world!.placesNear(this.x, this.y, this.vehicle.scanRadius).slice(0, 6);
-    if (!list.length) return this.speech.say(`No places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
+    const list = this.nearby(this.vehicle.scanRadius).slice(0, 6);
+    if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
     const text = list
       .map(({ place, d }) => `${place.name}, ${place.category}, ${fmtDistance(d, this.settings.units)} at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`)
       .join('. ');
@@ -2374,22 +2524,22 @@ export class Game {
   }
 
   private sonar() {
-    const list = this.world!.placesNear(this.x, this.y, this.vehicle.scanRadius).slice(0, 14);
+    const list = this.nearby(this.vehicle.scanRadius).slice(0, 14);
     this.audio.sonarStart();
     const t0 = this.audio.now + 0.5;
     for (const { place, d } of list) {
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
       const when = t0 + (normDeg(rel) / 360) * 2.2; // sweep clockwise from straight ahead
       const level = 0.12 + 0.3 * (1 - d / this.vehicle.scanRadius);
-      this.audio.placeCue(place.group, rel, level, when);
+      this.audio.placeCue(place.group, rel, level, when, d / this.vehicle.scanRadius);
     }
     this.speech.say(list.length ? `${list.length} places` : 'Nothing nearby', 'low');
   }
 
   private browsePlaces(dir: 1 | -1) {
     if (!this.browse || dist(this.x, this.y, this.browse.x, this.browse.y) > 30) {
-      const list = this.world!.placesNear(this.x, this.y, this.vehicle.scanRadius * 2).slice(0, 40).map((p) => p.place);
-      if (!list.length) return this.speech.say('No places nearby.', 'high');
+      const list = this.nearby(this.vehicle.scanRadius * 2).slice(0, 40).map((p) => p.place);
+      if (!list.length) return this.speech.say(`No ${this.filterLabel()}places nearby.`, 'high');
       this.browse = { list, idx: dir === 1 ? -1 : list.length, x: this.x, y: this.y };
     }
     const b = this.browse;
@@ -2413,6 +2563,7 @@ export class Game {
       return this.speech.say(`You are already at ${t.name}.`, 'high');
     }
     this.dest = t;
+    this.trip = { t0: this.clock, meters: 0, streets: [] };
     this.nextBeacon = 0;
     this.dropCorridor();
     const d0 = dist(this.x, this.y, t.x, t.y);
@@ -2435,6 +2586,18 @@ export class Game {
     const keep = d ? { name: d.name, radius: d.radius ?? 0, ...this.proj.toLatLon(d.x, d.y) } : null;
     await this.start({ lat, lon }, name);
     if (keep && this.world) this.setTargetLatLon(keep.name, keep.lat, keep.lon, keep.radius);
+  }
+
+  /** Where you are and where you are going, as lat/lon, for saving a named route. */
+  /** For dialogs outside the game that need to confirm something aloud. */
+  announce(text: string) {
+    this.speech.say(text, 'high');
+  }
+
+  currentTrip() {
+    const d = this.dest;
+    if (!d || !this.proj) return null;
+    return { street: this.streetName, start: this.position!, dest: { name: d.name, radius: d.radius ?? 0, ...this.proj.toLatLon(d.x, d.y) } };
   }
 
   /** Set a beacon destination from a search result (any distance, even outside the loaded map). */
@@ -2486,10 +2649,88 @@ export class Game {
     if (!r || r.partial) return this.speech.say(`${this.dest.name}: ${straight}.`, 'high');
     const left = Math.max(0, r.length - this.routeProg);
     // time at the current speed, or a typical speed for the vehicle when stopped
+    this.speech.say(`${fmtDistance(left, u)} to go along the route, about ${this.etaText(left)}. ${straight}.`, 'high');
+  }
+
+  /** Time for a distance at the current speed, or a typical speed for the vehicle when stopped. */
+  private etaText(left: number): string {
     const typical = { walker: 1.3, bicycle: 4.5, car: 9, helicopter: 50 }[this.vehicle.id];
     const minutes = Math.max(1, Math.round(left / (this.speed > 0.5 ? this.speed : typical) / 60));
-    const time = minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
-    this.speech.say(`${fmtDistance(left, u)} to go along the route, about ${time}. ${straight}.`, 'high');
+    return minutesText(minutes);
+  }
+
+  /** Spot notes are stored by position, so they are put on the local map again after each start. */
+  loadNotes() {
+    this.notes = loadNotes().map((n) => ({ ...this.proj.toXY(n.lat, n.lon), text: n.text }));
+  }
+
+  addNote(text: string) {
+    saveNotes([...loadNotes(), { text, ...this.proj.toLatLon(this.x, this.y) }]);
+    this.loadNotes();
+    this.speech.say('Note saved here.', 'high');
+  }
+
+  /** Shift + V: delete the note you are standing at. */
+  private deleteNote() {
+    const here = this.notes.findIndex((n) => dist(this.x, this.y, n.x, n.y) < 25);
+    if (here < 0) return this.speech.say('No note within 25 metres.', 'high');
+    const all = loadNotes();
+    all.splice(here, 1); // same order as this.notes
+    saveNotes(all);
+    this.loadNotes();
+    this.speech.say('Note deleted.', 'high');
+  }
+
+  private checkNotes() {
+    for (const n of this.notes) {
+      if (dist(this.x, this.y, n.x, n.y) > 25) continue;
+      const key = `note|${n.x}|${n.y}`;
+      if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
+      this.announcedHazards.set(key, this.clock);
+      this.speech.say(`Note: ${n.text}`, 'high');
+      break;
+    }
+  }
+
+  /** Z: copy a link that opens the app at this spot with the same destination, for a sighted helper. */
+  private async shareLink() {
+    const here = this.position!;
+    const enc = (name: string, p: LatLon) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)},${encodeURIComponent(name)}`;
+    let hash = `from=${enc(this.streetName ?? 'Shared start', here)}`;
+    if (this.dest) hash += `&to=${enc(this.dest.name, this.proj.toLatLon(this.dest.x, this.dest.y))}`;
+    const url = `${location.origin}${location.pathname}#${hash}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      this.speech.say(this.dest ? `Link to this route copied.` : 'Link to this spot copied.', 'high');
+    } catch {
+      this.speech.say('Could not copy the link. Clipboard access was refused.', 'high');
+    }
+  }
+
+  /** U: how the trip to the destination is going, or how the last one went. */
+  private tripSummary() {
+    const t = this.trip;
+    if (!t) return this.speech.say(this.lastTrip || 'No trip yet. Set a destination first.', 'high');
+    this.speech.say(`Trip so far: ${this.tripText(t)}.`, 'high');
+  }
+
+  private tripText(t: { t0: number; meters: number; streets: string[] }): string {
+    const via = t.streets.length ? `, via ${t.streets.slice(0, 5).join(', ')}${t.streets.length > 5 ? ' and more' : ''}` : '';
+    return `${fmtDistance(t.meters, this.settings.units)} in ${minutesText(Math.max(1, Math.round((this.clock - t.t0) / 60)))}${via}`;
+  }
+
+  /** O: the whole route in one go: length, time and the first few turns with the street each leads onto. */
+  private routePreview() {
+    const r = this.route;
+    if (!this.dest || !r) return this.instructions();
+    const u = this.settings.units;
+    const steps = r.maneuvers.slice(this.nextMan).filter((m) => m.kind !== 'arrive' && !this.isTrivial(m));
+    const left = Math.max(0, r.length - this.routeProg);
+    const shown = steps.slice(0, 8);
+    const list = shown.map((m, i) => `${i + 1}, ${this.stepText(m, this.dest!.name)} after ${fmtDistance(Math.max(0, m.d - (i ? shown[i - 1].d : this.routeProg)), u)}`);
+    const more = steps.length > shown.length ? ` ${steps.length - shown.length} more turns after that.` : '';
+    const head = `Route to ${this.dest.name}: ${fmtDistance(left, u)}${r.partial ? ' so far' : ''}, about ${this.etaText(left)}, ${steps.length} turn${steps.length === 1 ? '' : 's'}.`;
+    this.speech.say(`${head} ${list.length ? list.join('. ') + '.' : 'Straight on.'}${more}`, 'high');
   }
 
   private destinationInfo() {
@@ -2506,9 +2747,17 @@ export class Game {
     this.speech.say(`${next}${left}. ${straight} in a straight line.`, 'high');
   }
 
+  /** Y: save the destination, or else where you are, to recall in the Control + D / Control + J search. */
+  private saveFavorite() {
+    const at = this.dest ?? { name: this.streetName ?? 'Saved spot', x: this.x, y: this.y };
+    const added = addFavorite({ name: at.name, ...this.proj.toLatLon(at.x, at.y) });
+    this.speech.say(added ? `Saved ${at.name}.` : `${at.name} is already saved.`, 'high');
+  }
+
   private clearDestination() {
     if (!this.dest) return this.speech.say('No destination set.', 'high');
     this.dest = null;
+    this.trip = null;
     this.map.setDestination(null);
     this.dropCorridor();
     this.clearRoute();

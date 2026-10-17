@@ -1,11 +1,19 @@
 import './style.css';
 import { AudioEngine } from './audio/audio';
+import { setupBackup } from './backup';
 import { Game } from './game';
 import type { LatLon } from './geo';
 import { MapView } from './mapview';
+import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
+import { initPreview } from './preview';
+import type { PlaceGroup } from './world';
 import { Speech } from './speech';
+import { Tutorial } from './tutorial';
+import { bindRoutes } from './routesui';
+import { initManage } from './manage';
+import { setupPalette } from './palette';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -19,6 +27,25 @@ interface Selected extends LatLon {
 const PLACE_KEY = 'audio-map-place';
 let selected: Selected = loadPlace() ?? { name: 'Times Square, New York', lat: 40.758, lon: -73.9855 };
 
+/** A shared link: #from=lat,lon,name[&to=lat,lon,name] starts there and sets the destination. */
+function parseShared(): { from: Selected; to?: Selected } | null {
+  const pt = (v: string | null): Selected | undefined => {
+    const [lat, lon, ...rest] = (v ?? '').split(',');
+    const p = { lat: Number(lat), lon: Number(lon), name: decodeURIComponent(rest.join(',')) || 'Shared place' };
+    return lat && lon && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180 ? p : undefined;
+  };
+  try {
+    const q = new URLSearchParams(location.hash.slice(1));
+    const from = pt(q.get('from'));
+    return from ? { from, to: pt(q.get('to')) } : null;
+  } catch {
+    return null;
+  }
+}
+
+let shared = parseShared();
+if (shared) selected = shared.from;
+
 const stage = $<HTMLDivElement>('stage');
 const menu = $<HTMLDialogElement>('menu');
 const startBtn = $<HTMLButtonElement>('start-btn');
@@ -28,11 +55,12 @@ applyDisplay();
 const map = new MapView($('map'), selected, settings.display === 'highContrast');
 map.headingUp = settings.headingUpMap;
 let game: Game | null = null;
+let tutorial: Tutorial | null = null;
 
 // ---------- settings form ----------
 
 function bindSettings() {
-  for (const name of ['vehicle', 'speechMode', 'display', 'walkRoute'] as const) {
+  for (const name of ['vehicle', 'speechMode', 'display', 'walkRoute', 'soundProfile'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
       r.checked = r.value === settings[name];
       r.addEventListener('change', () => {
@@ -40,16 +68,31 @@ function bindSettings() {
       });
     }
   }
-  for (const id of ['announceStreets', 'announcePlaces', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'] as const) {
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'] as const) {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
+  }
+  for (const el of document.querySelectorAll<HTMLInputElement>('input[data-group]')) {
+    const group = el.dataset.group as PlaceGroup;
+    el.checked = !settings.mutedGroups.includes(group);
+    el.addEventListener('change', () =>
+      update({ mutedGroups: el.checked ? settings.mutedGroups.filter((g) => g !== group) : [...settings.mutedGroups, group] }),
+    );
   }
   for (const id of ['voiceRate', 'volume'] as const) {
     const el = $<HTMLInputElement>(id);
     el.value = String(settings[id]);
     el.addEventListener('input', () => update({ [id]: parseFloat(el.value) }));
   }
+  const places = $<HTMLSelectElement>('customPlaces');
+  const side = $<HTMLInputElement>('customSideStreets');
+  const extras = $<HTMLInputElement>('customExtras');
+  places.value = settings.customSound.places;
+  side.checked = settings.customSound.sideStreets;
+  extras.checked = settings.customSound.extras;
+  const custom = () => update({ customSound: { places: places.value as Settings['customSound']['places'], sideStreets: side.checked, extras: extras.checked } });
+  for (const el of [places, side, extras]) el.addEventListener('change', custom);
   const units = $<HTMLSelectElement>('units');
   units.value = settings.units;
   units.addEventListener('change', () => update({ units: units.value as Settings['units'] }));
@@ -57,12 +100,16 @@ function bindSettings() {
 
 function update(patch: Partial<Settings>) {
   Object.assign(settings, patch);
+  // a profile chosen with a vehicle is remembered for it, and comes back with it
+  if (patch.soundProfile) settings.vehicleProfiles = { ...settings.vehicleProfiles, [settings.vehicle]: patch.soundProfile };
+  else if (patch.vehicle && settings.vehicleProfiles[patch.vehicle]) settings.soundProfile = settings.vehicleProfiles[patch.vehicle]!;
   saveSettings(settings);
   speech.configure(settings.speechMode, settings.voiceRate);
   map.headingUp = settings.headingUpMap;
   applyDisplay();
   map.setHighContrast(settings.display === 'highContrast');
   game?.applySettings(settings);
+  syncVehicleRadios();
 }
 
 /** High contrast mode restyles the whole page (larger text, high contrast) through a root attribute. */
@@ -73,7 +120,7 @@ function applyDisplay() {
 
 /** settings that can also change by key (vehicle 1–4, walking routes D twice) */
 function syncVehicleRadios() {
-  for (const name of ['vehicle', 'walkRoute'] as const) {
+  for (const name of ['vehicle', 'walkRoute', 'soundProfile'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) r.checked = r.value === settings[name];
   }
 }
@@ -204,13 +251,22 @@ function closeMenu() {
   }
 }
 
-startBtn.addEventListener('click', () => {
+function startGame(learn = false) {
   if (!game) {
     const audio = new AudioEngine(settings.volume); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
     game.onMenu = openMenu;
     game.onNavigate = () => openNav('navigate');
     game.onJump = () => openNav('jump');
+    game.onNote = () => {
+      game?.pause();
+      $<HTMLInputElement>('note-text').value = '';
+      noteDlg.showModal();
+      $('note-text').focus();
+    };
+    tutorial = new Tutorial(speech, audio);
+    game.onKey = (c) => tutorial!.onKey(c);
+    bindRoutes(game, stage);
     game.onHud = (h) => {
       $('hud-street').textContent = h.street || '—';
       $('hud-speed').textContent = h.speed;
@@ -224,8 +280,16 @@ startBtn.addEventListener('click', () => {
   }
   if (menu.open) menu.close();
   game.focus(stage);
-  void game.start(selected, selected.name);
-});
+  const to = shared?.to;
+  shared = null; // only the first start follows the link
+  void game.start(selected, selected.name).then(() => {
+    if (to) game?.setTargetLatLon(to.name, to.lat, to.lon);
+    if (learn) tutorial!.begin();
+  });
+}
+
+startBtn.addEventListener('click', () => startGame());
+$('learn-btn').addEventListener('click', () => startGame(true));
 
 resumeBtn.addEventListener('click', closeMenu);
 
@@ -251,8 +315,8 @@ function openNav(mode: 'navigate' | 'jump') {
     : 'Search for a place, address or area. Turn-by-turn directions and a beacon will guide you there. Escape to cancel.';
   $('nav-label').textContent = jump ? 'Where do you want to jump to?' : 'Where do you want to go?';
   game.pause();
-  $('nav-status').textContent = '';
-  $<HTMLUListElement>('nav-results').replaceChildren();
+  $<HTMLInputElement>('nav-q').value = '';
+  showFavorites();
   if (!nav.open) nav.showModal();
   const q = $<HTMLInputElement>('nav-q');
   q.select();
@@ -275,10 +339,36 @@ function pickDestination(name: string, lat: number, lon: number, radius: number)
   } else game?.setTargetLatLon(name, lat, lon, radius);
 }
 
+/** Saved places (key Y), each with a button to remove it; shown when the search is empty. */
+function showFavorites() {
+  const list = $<HTMLUListElement>('nav-results');
+  list.replaceChildren();
+  const favs = loadFavorites();
+  $('nav-status').textContent = favs.length ? `${favs.length} saved places. Choose one, or search.` : 'No saved places yet. Press Y in the explorer to save one.';
+  for (const f of favs) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${f.name}, ${game?.describeFromHere(f.lat, f.lon) ?? ''}`;
+    b.addEventListener('click', () => pickDestination(f.name, f.lat, f.lon, 0));
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.textContent = 'Remove';
+    rm.setAttribute('aria-label', `Remove ${f.name}`);
+    rm.addEventListener('click', () => {
+      removeFavorite(f);
+      showFavorites();
+      $<HTMLInputElement>('nav-q').focus();
+    });
+    li.append(b, rm);
+    list.appendChild(li);
+  }
+}
+
 async function runNavSearch() {
   if (!game) return;
   const q = $<HTMLInputElement>('nav-q').value.trim();
-  if (!q) return;
+  if (!q) return showFavorites();
   const status = $('nav-status');
   const list = $<HTMLUListElement>('nav-results');
   list.replaceChildren();
@@ -319,6 +409,40 @@ nav.addEventListener('cancel', (e) => {
   closeNav();
 });
 
+// ---------- spot notes ----------
+
+const noteDlg = $<HTMLDialogElement>('note');
+
+function closeNote() {
+  if (noteDlg.open) noteDlg.close();
+  if (game) {
+    game.resume();
+    game.focus(stage);
+  }
+}
+
+$('note-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = $<HTMLInputElement>('note-text').value.trim();
+  if (text) game?.addNote(text);
+  closeNote();
+});
+noteDlg.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeNote();
+});
+
+const manage = initManage({
+  map,
+  canGo: () => !!game,
+  go: (name, lat, lon) => {
+    manage.close();
+    closeMenu();
+    game?.setTargetLatLon(name, lat, lon, 0);
+  },
+  notesChanged: () => game?.loadNotes(),
+});
+
 $('menu-btn').addEventListener('click', () => openMenu('main'));
 
 stage.addEventListener('focus', () => {
@@ -335,6 +459,37 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// F2 works everywhere: key events from the explorer bubble up to the document too
+const openPalette = setupPalette(
+  () => {
+    if (!game) {
+      speech.say('Start the explorer first.', 'high');
+      return false;
+    }
+    if (document.querySelector('dialog[open]')) return false;
+    game.pause();
+    return true;
+  },
+  () => {
+    game?.resume();
+    game?.focus(stage);
+  },
+  (x) => game?.run(x.key, x),
+);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F2') {
+    e.preventDefault();
+    openPalette();
+  }
+});
+
 bindSettings();
+initPreview(() => settings, speech);
+setupBackup(update);
 select(selected);
 openMenu('main');
+
+// the dev server must not serve stale files from a worker
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
