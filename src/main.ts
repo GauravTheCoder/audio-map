@@ -3,6 +3,7 @@ import { AudioEngine } from './audio/audio';
 import { Game } from './game';
 import type { LatLon } from './geo';
 import { MapView } from './mapview';
+import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { Speech } from './speech';
@@ -251,8 +252,8 @@ function openNav(mode: 'navigate' | 'jump') {
     : 'Search for a place, address or area. Turn-by-turn directions and a beacon will guide you there. Escape to cancel.';
   $('nav-label').textContent = jump ? 'Where do you want to jump to?' : 'Where do you want to go?';
   game.pause();
-  $('nav-status').textContent = '';
-  $<HTMLUListElement>('nav-results').replaceChildren();
+  $<HTMLInputElement>('nav-q').value = '';
+  showFavorites();
   if (!nav.open) nav.showModal();
   const q = $<HTMLInputElement>('nav-q');
   q.select();
@@ -275,10 +276,36 @@ function pickDestination(name: string, lat: number, lon: number, radius: number)
   } else game?.setTargetLatLon(name, lat, lon, radius);
 }
 
+/** Saved places (key Y), each with a button to remove it; shown when the search is empty. */
+function showFavorites() {
+  const list = $<HTMLUListElement>('nav-results');
+  list.replaceChildren();
+  const favs = loadFavorites();
+  $('nav-status').textContent = favs.length ? `${favs.length} saved places. Choose one, or search.` : 'No saved places yet. Press Y in the explorer to save one.';
+  for (const f of favs) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${f.name}, ${game?.describeFromHere(f.lat, f.lon) ?? ''}`;
+    b.addEventListener('click', () => pickDestination(f.name, f.lat, f.lon, 0));
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.textContent = 'Remove';
+    rm.setAttribute('aria-label', `Remove ${f.name}`);
+    rm.addEventListener('click', () => {
+      removeFavorite(f);
+      showFavorites();
+      $<HTMLInputElement>('nav-q').focus();
+    });
+    li.append(b, rm);
+    list.appendChild(li);
+  }
+}
+
 async function runNavSearch() {
   if (!game) return;
   const q = $<HTMLInputElement>('nav-q').value.trim();
-  if (!q) return;
+  if (!q) return showFavorites();
   const status = $('nav-status');
   const list = $<HTMLUListElement>('nav-results');
   list.replaceChildren();

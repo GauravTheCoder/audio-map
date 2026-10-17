@@ -6,6 +6,7 @@ import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
+import { addFavorite } from './favorites';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
@@ -1913,6 +1914,8 @@ export class Game {
         return c.shift ? this.clearDestination() : this.destinationInfo();
       case 'Backspace':
         return this.clearDestination();
+      case 'y':
+        return this.saveFavorite();
       case 'r':
         return this.alignToRoad();
       case 'f':
@@ -1982,7 +1985,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2504,6 +2507,13 @@ export class Game {
     const next = m && m.kind !== 'arrive' ? `${cap(this.stepText(m, this.dest.name))} in ${fmtDistance(m.d - this.routeProg, u)}. ` : '';
     const left = r.partial ? `${fmtDistance(r.length - this.routeProg, u)} of route loaded so far` : `${fmtDistance(r.length - this.routeProg, u)} to go`;
     this.speech.say(`${next}${left}. ${straight} in a straight line.`, 'high');
+  }
+
+  /** Y: save the destination, or else where you are, to recall in the Control + D / Control + J search. */
+  private saveFavorite() {
+    const at = this.dest ?? { name: this.streetName ?? 'Saved spot', x: this.x, y: this.y };
+    const added = addFavorite({ name: at.name, ...this.proj.toLatLon(at.x, at.y) });
+    this.speech.say(added ? `Saved ${at.name}.` : `${at.name} is already saved.`, 'high');
   }
 
   private clearDestination() {
