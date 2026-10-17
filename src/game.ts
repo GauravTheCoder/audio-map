@@ -17,6 +17,10 @@ import { World, type Edge, type GNode, type Junction, type Place, type PlaceGrou
 
 const STEP = 1 / 60;
 /** distances (m) at which progress toward the destination is spoken */
+function minutesText(minutes: number): string {
+  return minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+}
+
 const FILTER_NAMES: Record<PlaceGroup, string> = {
   food: 'food and drink',
   shop: 'shops',
@@ -213,6 +217,8 @@ export class Game {
   private routeReq = 0;
   private routePending = false;
   private destMilestone = Infinity;
+  private trip: { t0: number; meters: number; streets: string[] } | null = null;
+  private lastTrip = '';
   private placeFilter: PlaceGroup | null = null;
   private browse: { list: Place[]; idx: number; x: number; y: number } | null = null;
 
@@ -249,6 +255,7 @@ export class Game {
     this.road = null;
     this.streetName = null;
     this.dest = null;
+    this.trip = null;
     this.browse = null;
     this.announcedNodes.clear();
     this.announcedPlaces.clear();
@@ -583,6 +590,7 @@ export class Game {
 
     // --- move ---
     const r = (this.heading * Math.PI) / 180;
+    if (this.trip) this.trip.meters += this.speed * dt;
     this.x += Math.sin(r) * this.speed * dt;
     this.y += Math.cos(r) * this.speed * dt;
 
@@ -723,6 +731,8 @@ export class Game {
     }
     if (this.candName !== this.streetName && this.clock - this.candSince > 0.6) {
       this.streetName = this.candName;
+      const ts = this.trip?.streets;
+      if (ts && this.streetName && ts[ts.length - 1] !== this.streetName) ts.push(this.streetName);
       // entering a roundabout is announced with its exits instead
       if (this.streetName && this.settings.announceStreets && this.streetName !== ringName) {
         const extras: string[] = [];
@@ -1351,7 +1361,10 @@ export class Game {
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     if (d < Math.max(this.arriveRadius, this.dest.radius ?? 0)) {
       this.audio.arrival();
-      this.speech.say(`Arrived at ${this.dest.name}.`, 'high');
+      const done = this.trip ? ` Trip: ${this.tripText(this.trip)}. Press U to hear it again.` : '';
+      this.lastTrip = this.trip ? `Last trip to ${this.dest.name}: ${this.tripText(this.trip)}.` : '';
+      this.speech.say(`Arrived at ${this.dest.name}.${done}`, 'high');
+      this.trip = null;
       this.dest = null;
       this.map.setDestination(null);
       this.clearRoute();
@@ -1953,6 +1966,8 @@ export class Game {
         return this.clearDestination();
       case 'c':
         return this.cycleFilter();
+      case 'u':
+        return this.tripSummary();
       case 'e':
         return void this.whereAmI();
       case 'o':
@@ -2035,7 +2050,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2514,6 +2529,7 @@ export class Game {
       return this.speech.say(`You are already at ${t.name}.`, 'high');
     }
     this.dest = t;
+    this.trip = { t0: this.clock, meters: 0, streets: [] };
     this.nextBeacon = 0;
     this.dropCorridor();
     const d0 = dist(this.x, this.y, t.x, t.y);
@@ -2594,7 +2610,19 @@ export class Game {
   private etaText(left: number): string {
     const typical = { walker: 1.3, bicycle: 4.5, car: 9, helicopter: 50 }[this.vehicle.id];
     const minutes = Math.max(1, Math.round(left / (this.speed > 0.5 ? this.speed : typical) / 60));
-    return minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+    return minutesText(minutes);
+  }
+
+  /** U: how the trip to the destination is going, or how the last one went. */
+  private tripSummary() {
+    const t = this.trip;
+    if (!t) return this.speech.say(this.lastTrip || 'No trip yet. Set a destination first.', 'high');
+    this.speech.say(`Trip so far: ${this.tripText(t)}.`, 'high');
+  }
+
+  private tripText(t: { t0: number; meters: number; streets: string[] }): string {
+    const via = t.streets.length ? `, via ${t.streets.slice(0, 5).join(', ')}${t.streets.length > 5 ? ' and more' : ''}` : '';
+    return `${fmtDistance(t.meters, this.settings.units)} in ${minutesText(Math.max(1, Math.round((this.clock - t.t0) / 60)))}${via}`;
   }
 
   /** O: the whole route in one go: length, time and the first few turns with the street each leads onto. */
@@ -2635,6 +2663,7 @@ export class Game {
   private clearDestination() {
     if (!this.dest) return this.speech.say('No destination set.', 'high');
     this.dest = null;
+    this.trip = null;
     this.map.setDestination(null);
     this.dropCorridor();
     this.clearRoute();
