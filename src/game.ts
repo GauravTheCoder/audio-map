@@ -12,10 +12,21 @@ import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
-import { World, type Edge, type GNode, type Junction, type Place, type RoadHit, type Way } from './world';
+import { World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
 /** distances (m) at which progress toward the destination is spoken */
+const FILTER_NAMES: Record<PlaceGroup, string> = {
+  food: 'food and drink',
+  shop: 'shops',
+  transport: 'transport',
+  culture: 'culture',
+  nature: 'parks and nature',
+  health: 'health',
+  service: 'services',
+  other: 'other places',
+};
+const FILTERS: (PlaceGroup | null)[] = [null, 'food', 'shop', 'transport', 'health', 'culture', 'nature', 'service'];
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
 
 const CAR_ROADS =
@@ -200,6 +211,7 @@ export class Game {
   private routeReq = 0;
   private routePending = false;
   private destMilestone = Infinity;
+  private placeFilter: PlaceGroup | null = null;
   private browse: { list: Place[]; idx: number; x: number; y: number } | null = null;
 
   private nextHud = 0;
@@ -1914,6 +1926,8 @@ export class Game {
         return c.shift ? this.clearDestination() : this.destinationInfo();
       case 'Backspace':
         return this.clearDestination();
+      case 'c':
+        return this.cycleFilter();
       case 'y':
         return this.saveFavorite();
       case 'r':
@@ -1985,7 +1999,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2367,9 +2381,26 @@ export class Game {
     this.nextProxBeep = this.clock + 0.1 + 0.8 * (1 - closeness);
   }
 
+  private nearby(r: number) {
+    const all = this.world!.placesNear(this.x, this.y, r);
+    return this.placeFilter ? all.filter((p) => p.place.group === this.placeFilter) : all;
+  }
+
+  private filterLabel() {
+    return this.placeFilter ? `${FILTER_NAMES[this.placeFilter]} ` : '';
+  }
+
+  /** C: show only one kind of place in W, Space and Tab, cycling through the kinds and back to all. */
+  private cycleFilter() {
+    const i = FILTERS.indexOf(this.placeFilter);
+    this.placeFilter = FILTERS[(i + 1) % FILTERS.length];
+    this.browse = null;
+    this.speech.say(this.placeFilter ? `Showing only ${FILTER_NAMES[this.placeFilter]}.` : 'Showing all places.', 'high');
+  }
+
   private whatsAround() {
-    const list = this.world!.placesNear(this.x, this.y, this.vehicle.scanRadius).slice(0, 6);
-    if (!list.length) return this.speech.say(`No places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
+    const list = this.nearby(this.vehicle.scanRadius).slice(0, 6);
+    if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
     const text = list
       .map(({ place, d }) => `${place.name}, ${place.category}, ${fmtDistance(d, this.settings.units)} at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`)
       .join('. ');
@@ -2377,7 +2408,7 @@ export class Game {
   }
 
   private sonar() {
-    const list = this.world!.placesNear(this.x, this.y, this.vehicle.scanRadius).slice(0, 14);
+    const list = this.nearby(this.vehicle.scanRadius).slice(0, 14);
     this.audio.sonarStart();
     const t0 = this.audio.now + 0.5;
     for (const { place, d } of list) {
@@ -2391,8 +2422,8 @@ export class Game {
 
   private browsePlaces(dir: 1 | -1) {
     if (!this.browse || dist(this.x, this.y, this.browse.x, this.browse.y) > 30) {
-      const list = this.world!.placesNear(this.x, this.y, this.vehicle.scanRadius * 2).slice(0, 40).map((p) => p.place);
-      if (!list.length) return this.speech.say('No places nearby.', 'high');
+      const list = this.nearby(this.vehicle.scanRadius * 2).slice(0, 40).map((p) => p.place);
+      if (!list.length) return this.speech.say(`No ${this.filterLabel()}places nearby.`, 'high');
       this.browse = { list, idx: dir === 1 ? -1 : list.length, x: this.x, y: this.y };
     }
     const b = this.browse;
