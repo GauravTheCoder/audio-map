@@ -1928,6 +1928,8 @@ export class Game {
         return this.clearDestination();
       case 'c':
         return this.cycleFilter();
+      case 'x':
+        return this.nearestTransit();
       case 'y':
         return this.saveFavorite();
       case 'r':
@@ -1999,7 +2001,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2379,6 +2381,19 @@ export class Game {
     const closeness = 1 - d / range;
     this.audio.proximityBeep(closeness, a.deadEnd);
     this.nextProxBeep = this.clock + 0.1 + 0.8 * (1 - closeness);
+  }
+
+  /** X: set the nearest bus stop or station as destination; again for the next nearest of five. */
+  private nearestTransit() {
+    const stops = this.world!.places
+      .filter((p) => p.category === 'bus stop' || p.category === 'station' || p.category === 'bus station')
+      .map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 5);
+    if (!stops.length) return this.speech.say('No bus stops or stations on the loaded map.', 'high');
+    const cur = this.dest ? stops.findIndex(({ p }) => p.x === this.dest!.x && p.y === this.dest!.y) : -1;
+    const { p } = stops[(cur + 1) % stops.length];
+    this.setTarget({ name: p.name, x: p.x, y: p.y });
   }
 
   private nearby(r: number) {
