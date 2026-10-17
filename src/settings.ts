@@ -1,3 +1,5 @@
+import type { SoundProfile } from './profiles';
+
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
 export type VehicleId = 'walker' | 'bicycle' | 'car' | 'helicopter';
@@ -23,6 +25,7 @@ export interface Settings {
   headingUpMap: boolean;
   display: DisplayMode;
   walkRoute: WalkRoute;
+  soundProfile: SoundProfile;
   volume: number;
 }
 
@@ -43,6 +46,7 @@ const DEFAULTS: Settings = {
   headingUpMap: true,
   display: 'highContrast',
   walkRoute: 'shortest',
+  soundProfile: 'simple',
   volume: 0.8,
 };
 

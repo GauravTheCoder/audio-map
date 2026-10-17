@@ -8,6 +8,7 @@ import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
+import { extrasWanted, junctionQuiet, nextProfile, placeWanted, PROFILE_TEXT } from './profiles';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
@@ -675,7 +676,7 @@ export class Game {
     this.heading = normDeg(this.heading + deg);
     this.lastManualTurn = this.clock;
     this.turnedDuringHold = true;
-    if (!this.settings.compassTicks) return;
+    if (!this.settings.compassTicks || !extrasWanted(this.settings.soundProfile, this.vehicle.id)) return;
     const a = Math.floor(before / 10);
     const b = Math.floor(this.heading / 10);
     if (a !== b) {
@@ -831,6 +832,7 @@ export class Game {
       this.speech.say(`Here: ${this.stepWithThen(turn)}.`, 'high');
       return;
     }
+    if (!ringNode && junctionQuiet(this.settings.soundProfile, this.vehicle.id, j)) return;
     if (this.route && this.offRouteSince < 0 && !ringNode) this.audio.routePassIntersection(this.exitAngles(j));
     else this.audio.atIntersection(this.exitAngles(j));
     // the moment to decide: name every road and which way it goes from here
@@ -952,6 +954,7 @@ export class Game {
     }
     const j = this.world!.junction(a.node, this.filter, this.junctionRadius);
     for (const m of j.nodes) this.announcedNodes.set(m.id, this.clock); // one announcement per junction
+    if (junctionQuiet(this.settings.soundProfile, this.vehicle.id, j)) return;
     const branches = this.junctionBranches(a.node, a.arrival, a.arriveName, false);
     if (!branches) return;
     this.audio.intersectionChime(j.exits.length, j.signals);
@@ -1323,6 +1326,7 @@ export class Game {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
     if (this.clock - this.lastPlaceSpoken < 1.2) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
+      if (!placeWanted(this.settings.soundProfile, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
       if (this.clock - last < 180) continue;
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
@@ -1976,6 +1980,11 @@ export class Game {
         saveSettings(this.settings);
         return this.speech.say(`Road assist ${this.settings.roadAssist ? 'on' : 'off'}.`, 'high');
       case 'p':
+        if (c.shift) {
+          this.settings.soundProfile = nextProfile(this.settings.soundProfile);
+          saveSettings(this.settings);
+          return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
+        }
         this.settings.announcePlaces = !this.settings.announcePlaces;
         saveSettings(this.settings);
         return this.speech.say(`Place announcements ${this.settings.announcePlaces ? 'on' : 'off'}.`, 'high');
@@ -2020,7 +2029,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
         'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
-        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
@@ -2390,7 +2399,7 @@ export class Game {
   /** Parking-sensor style beeps that quicken as the next intersection approaches. */
   private updateProximityBeeps() {
     const a = this.ahead;
-    if (!this.settings.proximityBeeps || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
+    if (!this.settings.proximityBeeps || !extrasWanted(this.settings.soundProfile, this.vehicle.id) || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
     const base = this.vehicle.id === 'walker' ? 25 : this.vehicle.id === 'bicycle' ? 35 : 40;
     const range = Math.min(120, Math.max(base, this.speed * 3));
     const d = a.forward - this.speed * (this.clock - this.aheadAt); // ahead is refreshed every 0.1 s
