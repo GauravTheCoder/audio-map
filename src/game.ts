@@ -5,7 +5,7 @@ import { Input, type Command } from './input';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { fetchTileArea } from './tiles';
-import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
+import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
@@ -309,7 +309,7 @@ export class Game {
     this.audio.loaded();
     const where = this.streetName ? `On ${this.streetName}` : 'Not on a road';
     this.speech.say(
-      `Ready. ${this.vehicle.name}. ${where}, facing ${compass16(this.heading)}.` +
+      `Ready. ${this.vehicle.name}. ${where}, facing ${compass8(this.heading)}.` +
         `${this.areaName ? ` ${this.areaName}.` : ''} ${world.ways.length} roads${world.places.length ? ` and ${world.places.length} places` : ''} loaded.` +
         ` Hold up arrow to move. Press F1 for help.`,
       'normal',
@@ -1937,7 +1937,7 @@ export class Game {
       case 'k':
         return this.help();
       case 'h':
-        return this.speech.say(`Facing ${compass16(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
+        return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
       case 's':
         return this.speech.say(
           this.speed < 0.1 ? 'Stopped.' : `${fmtSpeed(this.speed, u)}.`,
@@ -2883,7 +2883,7 @@ export class Game {
     this.onHud?.({
       street: this.streetName ?? (this.onRoad ? '' : 'Off road'),
       speed: fmtSpeedShort(this.speed, u),
-      heading: `${Math.round(this.heading)}° ${compass16(this.heading)}`,
+      heading: `${Math.round(this.heading)}° ${compass8(this.heading)}`,
       area: this.areaName,
       destination,
       status: this.loading ? 'Loading map data…' : '',
