@@ -9,6 +9,7 @@ import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview } from './preview';
 import { Speech } from './speech';
 import { Tutorial } from './tutorial';
+import { bindRoutes } from './routesui';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -254,6 +255,7 @@ function startGame(learn = false) {
     };
     tutorial = new Tutorial(speech, audio);
     game.onKey = (c) => tutorial!.onKey(c);
+    bindRoutes(game, stage);
     game.onHud = (h) => {
       $('hud-street').textContent = h.street || '—';
       $('hud-speed').textContent = h.speed;

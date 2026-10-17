@@ -236,6 +236,8 @@ export class Game {
   onNote?: () => void;
   /** sees every key first; returning true consumes it */
   onKey?: (c: Command) => boolean;
+  onSaveRoute?: () => void;
+  onRoutes?: () => void;
 
   constructor(
     private settings: Settings,
@@ -2007,6 +2009,8 @@ export class Game {
       case 'j':
         if (c.ctrl) this.onJump?.();
         return;
+      case 'q':
+        return c.shift ? this.onSaveRoute?.() : this.onRoutes?.();
       case 'd': {
         if (c.ctrl) return this.onNavigate?.();
         // pressed twice quickly: switch walking routes between shortest and streets only
@@ -2074,7 +2078,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2576,6 +2580,13 @@ export class Game {
     const keep = d ? { name: d.name, radius: d.radius ?? 0, ...this.proj.toLatLon(d.x, d.y) } : null;
     await this.start({ lat, lon }, name);
     if (keep && this.world) this.setTargetLatLon(keep.name, keep.lat, keep.lon, keep.radius);
+  }
+
+  /** Where you are and where you are going, as lat/lon, for saving a named route. */
+  currentTrip() {
+    const d = this.dest;
+    if (!d || !this.proj) return null;
+    return { street: this.streetName, start: this.position!, dest: { name: d.name, radius: d.radius ?? 0, ...this.proj.toLatLon(d.x, d.y) } };
   }
 
   /** Set a beacon destination from a search result (any distance, even outside the loaded map). */
