@@ -243,6 +243,12 @@ startBtn.addEventListener('click', () => {
     game.onMenu = openMenu;
     game.onNavigate = () => openNav('navigate');
     game.onJump = () => openNav('jump');
+    game.onNote = () => {
+      game?.pause();
+      $<HTMLInputElement>('note-text').value = '';
+      noteDlg.showModal();
+      $('note-text').focus();
+    };
     game.onHud = (h) => {
       $('hud-street').textContent = h.street || '—';
       $('hud-speed').textContent = h.speed;
@@ -379,6 +385,29 @@ $<HTMLInputElement>('nav-q').addEventListener('keydown', (e) => {
 nav.addEventListener('cancel', (e) => {
   e.preventDefault();
   closeNav();
+});
+
+// ---------- spot notes ----------
+
+const noteDlg = $<HTMLDialogElement>('note');
+
+function closeNote() {
+  if (noteDlg.open) noteDlg.close();
+  if (game) {
+    game.resume();
+    game.focus(stage);
+  }
+}
+
+$('note-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = $<HTMLInputElement>('note-text').value.trim();
+  if (text) game?.addNote(text);
+  closeNote();
+});
+noteDlg.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeNote();
 });
 
 $('menu-btn').addEventListener('click', () => openMenu('main'));

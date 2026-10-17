@@ -170,6 +170,7 @@
               <tr><td>G</td><td>Destination distance and direction</td></tr>
               <tr><td>Backspace</td><td>Clear destination</td></tr>
               <tr><td>C</td><td>Show only one kind of place (food, shops, transport, health, culture, parks, services) in W, Space and Tab; press again to cycle, back to all</td></tr>
+              <tr><td>V</td><td>Leave a spoken note at this spot; you hear it when you pass again. Shift + V deletes the note you are at</td></tr>
               <tr><td>Z</td><td>Copy a link to this spot and your destination, to open on another device</td></tr>
               <tr><td>U</td><td>Trip summary: distance, time and streets so far, or the last trip once you have arrived</td></tr>
               <tr><td>E</td><td>Where am I: street, area, nearest landmark and nearest bus stop or station</td></tr>
@@ -226,6 +227,18 @@
         </div>
         <p id="nav-status" class="hint" aria-live="polite"></p>
         <ul id="nav-results" class="results" aria-label="Destinations"></ul>
+      </form>
+    </dialog>
+
+    <dialog id="note" aria-labelledby="note-title">
+      <form method="dialog" id="note-form">
+        <h2 id="note-title">Note for this spot</h2>
+        <p class="hint">You will hear it whenever you pass within 25 metres. Escape to cancel.</p>
+        <label for="note-text">What should the note say?</label>
+        <div class="inline">
+          <input id="note-text" type="text" autocomplete="off" placeholder="e.g. steep kerb, door on the left" />
+          <button type="submit" id="note-save">Save note</button>
+        </div>
       </form>
     </dialog>
 
