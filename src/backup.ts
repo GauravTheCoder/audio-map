@@ -16,7 +16,7 @@ export interface Backup {
   settings: Partial<Settings>;
 }
 
-const PLACES_KEY = 'audio-map-places';
+const PLACES_KEY = 'audio-map-favorites';
 const NOTES_KEY = 'audio-map-notes';
 const SETTINGS_KEY = 'audio-map-settings';
 const MAX_PLACES = 500;
@@ -136,8 +136,11 @@ export function setupBackup(applySettings: (patch: Partial<Settings>) => void): 
       const have = stored();
       const p = merge(have.places, inc.places, (x) => x.name, MAX_PLACES);
       const n = merge(have.notes, inc.notes, (x) => x.text, MAX_NOTES);
-      localStorage.setItem(PLACES_KEY, JSON.stringify(p.all));
-      localStorage.setItem(NOTES_KEY, JSON.stringify(n.all));
+      // loaded here so the pure validate/merge above stay runnable without the browser
+      const [{ saveFavorites }, { saveNotes }] = await Promise.all([import('./favorites'), import('./notes')]);
+      // through the stores, so the map markers and the running game pick the imports up
+      saveFavorites(p.all);
+      saveNotes(n.all);
       const changed = Object.keys(inc.settings).length > 0;
       if (changed) {
         applySettings(inc.settings);
