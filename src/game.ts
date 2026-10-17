@@ -1334,6 +1334,7 @@ export class Game {
       const key = `${h.text}|${Math.round(h.x)},${Math.round(h.y)}`;
       if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
       this.announcedHazards.set(key, this.clock);
+      this.audio.hazardCue(h.text, relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y)), 1 - Math.min(1, d / reach));
       this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}`, 'high');
       break;
     }
