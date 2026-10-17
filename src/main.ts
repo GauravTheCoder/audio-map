@@ -20,6 +20,25 @@ interface Selected extends LatLon {
 const PLACE_KEY = 'audio-map-place';
 let selected: Selected = loadPlace() ?? { name: 'Times Square, New York', lat: 40.758, lon: -73.9855 };
 
+/** A shared link: #from=lat,lon,name[&to=lat,lon,name] starts there and sets the destination. */
+function parseShared(): { from: Selected; to?: Selected } | null {
+  const pt = (v: string | null): Selected | undefined => {
+    const [lat, lon, ...rest] = (v ?? '').split(',');
+    const p = { lat: Number(lat), lon: Number(lon), name: decodeURIComponent(rest.join(',')) || 'Shared place' };
+    return lat && lon && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180 ? p : undefined;
+  };
+  try {
+    const q = new URLSearchParams(location.hash.slice(1));
+    const from = pt(q.get('from'));
+    return from ? { from, to: pt(q.get('to')) } : null;
+  } catch {
+    return null;
+  }
+}
+
+let shared = parseShared();
+if (shared) selected = shared.from;
+
 const stage = $<HTMLDivElement>('stage');
 const menu = $<HTMLDialogElement>('menu');
 const startBtn = $<HTMLButtonElement>('start-btn');
@@ -225,7 +244,11 @@ startBtn.addEventListener('click', () => {
   }
   if (menu.open) menu.close();
   game.focus(stage);
-  void game.start(selected, selected.name);
+  const to = shared?.to;
+  shared = null; // only the first start follows the link
+  void game.start(selected, selected.name).then(() => {
+    if (to) game?.setTargetLatLon(to.name, to.lat, to.lon);
+  });
 });
 
 resumeBtn.addEventListener('click', closeMenu);

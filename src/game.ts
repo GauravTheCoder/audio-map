@@ -1966,6 +1966,8 @@ export class Game {
         return this.clearDestination();
       case 'c':
         return this.cycleFilter();
+      case 'z':
+        return void this.shareLink();
       case 'u':
         return this.tripSummary();
       case 'e':
@@ -2050,7 +2052,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2611,6 +2613,21 @@ export class Game {
     const typical = { walker: 1.3, bicycle: 4.5, car: 9, helicopter: 50 }[this.vehicle.id];
     const minutes = Math.max(1, Math.round(left / (this.speed > 0.5 ? this.speed : typical) / 60));
     return minutesText(minutes);
+  }
+
+  /** Z: copy a link that opens the app at this spot with the same destination, for a sighted helper. */
+  private async shareLink() {
+    const here = this.position!;
+    const enc = (name: string, p: LatLon) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)},${encodeURIComponent(name)}`;
+    let hash = `from=${enc(this.streetName ?? 'Shared start', here)}`;
+    if (this.dest) hash += `&to=${enc(this.dest.name, this.proj.toLatLon(this.dest.x, this.dest.y))}`;
+    const url = `${location.origin}${location.pathname}#${hash}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      this.speech.say(this.dest ? `Link to this route copied.` : 'Link to this spot copied.', 'high');
+    } catch {
+      this.speech.say('Could not copy the link. Clipboard access was refused.', 'high');
+    }
   }
 
   /** U: how the trip to the destination is going, or how the last one went. */
