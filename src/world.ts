@@ -34,6 +34,8 @@ export interface GNode {
   y: number;
   edges: Edge[];
   signals: boolean;
+  /** the road goes on here, but beyond the loaded map */
+  cut?: boolean;
 }
 
 export interface Segment {
@@ -57,6 +59,8 @@ export interface RoadWalk {
   deadEnd: boolean;
   /** name of the road we arrive on */
   arriveName: string;
+  /** the "dead end" is only where the loaded map stops */
+  mapEdge?: boolean;
 }
 
 export interface Place {
@@ -173,8 +177,16 @@ export class World {
   private segGrid = new Grid<Segment>(60);
   private nodeGrid = new Grid<GNode>(80);
   private placeGrid = new Grid<Place>(100);
+  /** the loaded area in local metres, if known */
+  private bounds: { minX: number; minY: number; maxX: number; maxY: number } | null = null;
 
   constructor(readonly proj: Projection, raw: RawRoads) {
+    if (raw.box) {
+      const [s, w, n, e] = raw.box;
+      const sw = proj.toXY(s, w);
+      const ne = proj.toXY(n, e);
+      this.bounds = { minX: sw.x, minY: sw.y, maxX: ne.x, maxY: ne.y };
+    }
     for (const rw of raw.ways) {
       const t = rw.tags;
       const type = t.highway;
@@ -199,6 +211,7 @@ export class World {
       for (const nid of rw.nodes) {
         const ll = raw.nodes.get(nid);
         if (!ll) {
+          if (prev) prev.cut = true; // the way carries on outside the loaded area
           prev = null;
           continue;
         }
@@ -209,6 +222,7 @@ export class World {
           this.nodes.set(nid, n);
           this.nodeGrid.insertBox(n, n.x, n.y, n.x, n.y);
         }
+        if (!prev && rw.nodes[0] !== nid) n.cut = true; // the way came in from outside the loaded area
         if (prev && prev !== n) {
           prev.edges.push({ to: n.id, way, fwd: true });
           n.edges.push({ to: prev.id, way, fwd: false });
@@ -379,7 +393,7 @@ export class World {
       trail.push(cur);
       if (isStop(cur)) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: false, arriveName };
       const best = this.continuation(prev, cur, name, canUse);
-      if (!best) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: true, arriveName };
+      if (!best) return { node: cur, dist: d, arrival: arrivalBearing(trail), deadEnd: true, arriveName, mapEdge: this.atMapEdge(cur) };
       d += dist(cur.x, cur.y, best.node.x, best.node.y);
       arriveName = best.way.name;
       prev = cur;
@@ -420,7 +434,7 @@ export class World {
     canUse: (w: Way) => boolean,
     isStop: (n: GNode) => boolean,
     maxDist: number,
-  ): { pts: { x: number; y: number; d: number }[]; stopped: boolean; deadEnd: boolean } {
+  ): { pts: { x: number; y: number; d: number }[]; stopped: boolean; deadEnd: boolean; mapEdge?: boolean } {
     const pts = [{ x, y, d: 0 }];
     let d = 0;
     for (let guard = 0; guard < 2000; guard++) {
@@ -430,11 +444,20 @@ export class World {
       if (isStop(cur)) return { pts, stopped: true, deadEnd: false };
       if (d >= maxDist) break;
       const next = this.continuation(prev, cur, name, canUse);
-      if (!next) return { pts, stopped: false, deadEnd: true };
+      if (!next) return { pts, stopped: false, deadEnd: true, mapEdge: this.atMapEdge(cur) };
       prev = cur;
       cur = next.node;
     }
     return { pts, stopped: false, deadEnd: false };
+  }
+
+  /** Does the road only seem to end here because the loaded map stops (or is about to)? */
+  atMapEdge(n: GNode): boolean {
+    if (n.cut) return true;
+    const b = this.bounds;
+    if (!b) return false;
+    const margin = 30;
+    return n.x < b.minX + margin || n.x > b.maxX - margin || n.y < b.minY + margin || n.y > b.maxY - margin;
   }
 
   /** Is this node on a roundabout's ring? */

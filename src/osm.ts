@@ -20,6 +20,8 @@ export interface RawPlace {
 export interface RawRoads {
   nodes: Map<number, LatLon>;
   ways: RawWay[];
+  /** the area loaded (south, west, north, east): roads are cut off at its edges */
+  box?: [number, number, number, number];
 }
 
 export interface RawPlaces {
@@ -98,7 +100,8 @@ out skel qt;`;
     if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) nodes.set(el.id, { lat: el.lat, lon: el.lon });
     else if (el.type === 'way' && el.nodes && el.tags?.highway) ways.push({ id: el.id, nodes: el.nodes, tags: el.tags });
   }
-  return { nodes, ways };
+  const [s, w, n, e] = box.split(',').map(Number);
+  return { nodes, ways, box: [s, w, n, e] };
 }
 
 export async function fetchPlaces(center: LatLon, radius: number, signal: AbortSignal, onRetry?: RetryNotice): Promise<RawPlaces> {

@@ -355,6 +355,13 @@ export class AudioEngine {
     });
   }
 
+  /** Going the wrong way along the route: a low falling pair from behind you. */
+  wrongWay() {
+    const dest = this.spatial(180, 0.4);
+    this.tone(523, { dur: 0.18, dest, type: 'square', level: 0.12 });
+    this.tone(330, { when: this.now + 0.2, dur: 0.3, dest, type: 'square', level: 0.12 });
+  }
+
   /** Road ends ahead: two low falling notes. */
   deadEnd() {
     this.tone(392, { dur: 0.16, level: 0.16, type: 'triangle' });

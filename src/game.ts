@@ -102,6 +102,8 @@ interface Ahead {
   /** direction of travel when arriving at the node */
   arrival: number;
   deadEnd: boolean;
+  /** the road only seems to end there because the loaded map stops */
+  mapEdge?: boolean;
   /** street we arrive on */
   arriveName: string;
 }
@@ -183,6 +185,9 @@ export class Game {
   private lastRouteCalc = -1e9;
   private nextRouteCheck = 0;
   private lastIPress = 0;
+  /** furthest along the route we have been, to notice going back along it */
+  private furthestProg = 0;
+  private lastWrongWay = -1e9;
   /** streets loaded between the traveller and a distant destination, used only for routing */
   private routeWorld: { world: World; vehicle: VehicleId; minX: number; minY: number; maxX: number; maxY: number } | null = null;
   private corridorAbort: AbortController | null = null;
@@ -806,7 +811,7 @@ export class Game {
         (n) => w.isIntersection(n, this.filter) && !skip?.has(n.id),
         range,
       );
-      return r && { node: r.node, forward: r.dist, arrival: r.arrival, deadEnd: r.deadEnd, arriveName: r.arriveName };
+      return r && { node: r.node, forward: r.dist, arrival: r.arrival, deadEnd: r.deadEnd, mapEdge: r.mapEdge, arriveName: r.arriveName };
     }
     return this.findAhead(range);
   }
@@ -836,6 +841,7 @@ export class Game {
       this.speech.say(this.roundaboutText(rb, a), pr);
       return;
     }
+    if (a.mapEdge) return; // not a real dead end: more map loads before we get there
     if (a.deadEnd) {
       this.announcedNodes.set(a.node.id, this.clock);
       this.audio.deadEnd();
@@ -1136,8 +1142,12 @@ export class Game {
     return `, road bends ${Math.abs(b) > 120 ? 'sharply ' : ''}${b < 0 ? 'left' : 'right'} before it`;
   }
 
-  /** "Dead end", or "Oak Street ends" when a path or smaller road carries on (walkers are never blocked). */
+  /**
+   * "Dead end", or "Oak Street ends" when a path or smaller road carries on (walkers are never
+   * blocked), or "Map data ends" where the road goes on beyond what has loaded.
+   */
   private endWord(a: Ahead): string {
+    if (a.mapEdge) return 'Map data ends';
     const usable = a.node.edges.filter((e) => this.vehicle.canUse(e.way)).length;
     const blocked = usable <= 1 && this.vehicle.id !== 'walker';
     return !blocked && a.arriveName ? `${a.arriveName} ends` : 'Dead end';
@@ -1451,6 +1461,7 @@ export class Game {
     this.route = r;
     this.routeIdx = 0;
     this.routeProg = 0;
+    this.furthestProg = 0;
     this.nextMan = 0;
     this.spokenSteps.clear();
     this.offRouteSince = -1;
@@ -1507,12 +1518,12 @@ export class Game {
         'high',
       );
     }
-    const parts: string[] = [];
+    const parts: string[] = this.routeBehind() ? ['Turn around'] : [];
     let at = this.routeProg;
     for (const m of steps.slice(0, double ? 3 : 1)) {
       const gap = Math.max(0, m.d - at);
       const text = this.stepText(m, this.dest.name);
-      parts.push(parts.length ? `Then after ${fmtDistance(gap, u)}, ${text}` : `In ${fmtDistance(gap, u)}, ${this.whichIntersection(m)}${text}`);
+      parts.push(at > this.routeProg ? `Then after ${fmtDistance(gap, u)}, ${text}` : `In ${fmtDistance(gap, u)}, ${this.whichIntersection(m)}${text}`);
       at = m.d;
     }
     if (double && steps.length <= 3 && r.partial) parts.push('The route continues as more map loads');
@@ -1644,6 +1655,15 @@ export class Game {
       return;
     }
     this.offRouteSince = -1;
+
+    // travelling back along the route: the wrong way
+    if (this.routeProg > this.furthestProg || this.speed < 0.5) this.furthestProg = Math.max(this.furthestProg, this.routeProg);
+    else if (this.furthestProg - this.routeProg > Math.max(15, this.speed * 2) && this.clock - this.lastWrongWay > 15) {
+      this.lastWrongWay = this.clock;
+      this.furthestProg = this.routeProg;
+      this.audio.wrongWay();
+      this.speech.say('Wrong way. Turn around.', 'high');
+    }
 
     // a route that stops at the edge of the loaded map: extend it as we approach the end
     if (r.partial && r.length - this.routeProg < 150 && this.clock - this.lastRouteCalc > 5) {
@@ -1893,6 +1913,7 @@ export class Game {
 
   /** Short name for a junction: the cross streets, e.g. "Oak Street" or "Oak Street and King Street". */
   private junctionLabel(a: Ahead): string {
+    if (a.mapEdge) return 'end of the loaded map';
     if (a.deadEnd) return this.endWord(a).toLowerCase().startsWith('dead') ? 'dead end' : `end of ${a.arriveName}`;
     const names: string[] = [];
     for (const { edge } of this.world!.junction(a.node, this.filter, this.junctionRadius).exits) {
@@ -1952,11 +1973,36 @@ export class Game {
     if (rb) return this.speech.say(cap(lead + this.roundaboutText(rb, a)), 'high');
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, a.node.x, a.node.y));
     const where = a.forward < 15 || Math.abs(rel) <= 15 ? 'straight ahead' : `at ${clockDir(rel)}`;
+    const note = this.routeNote(a);
     if (a.deadEnd) {
       const end = this.endWord(a);
-      return this.speech.say(cap(`${lead}${lead && end === 'Dead end' ? 'dead end' : end} in ${fmtDistance(a.forward, u)}, ${where}${vague}.`), 'high');
+      const more = a.mapEdge ? (this.loading ? ' More map is loading.' : ' More loads as you go.') : '';
+      return this.speech.say(cap(`${lead}${lead && end !== 'Map data ends' && end !== 'Dead end' ? end : lead ? end.toLowerCase() : end} in ${fmtDistance(a.forward, u)}, ${where}${vague}.${more}${note}`), 'high');
     }
-    this.speech.say(cap(this.describeAhead(a, `${lead}next intersection in ${fmtDistance(a.forward, u)}, ${where}`, bends.length ? a.arrival : this.heading)), 'high');
+    this.speech.say(cap(this.describeAhead(a, `${lead}next intersection in ${fmtDistance(a.forward, u)}, ${where}`, bends.length ? a.arrival : this.heading)) + note, 'high');
+  }
+
+  /** For N: where the route goes, when it doesn't simply follow this road to what N describes. */
+  private routeNote(a: Ahead): string {
+    const r = this.route;
+    if (!r || this.offRouteSince >= 0) return '';
+    if (this.routeBehind()) return ' Your route is behind you.';
+    const m = this.upcoming();
+    if (!m || (m.kind === 'arrive' && r.partial)) return '';
+    const d = m.d - this.routeProg;
+    if (d >= a.forward - 10 || dist(m.x, m.y, a.node.x, a.node.y) < 15) return '';
+    const u = this.settings.units;
+    if (m.kind === 'arrive') return ` ${this.dest?.name ?? 'Your destination'} comes first, in ${fmtDistance(d, u)}.`;
+    return ` Your route leaves this road before then: in ${fmtDistance(d, u)}, ${this.stepText(m, this.dest?.name ?? '')}.`;
+  }
+
+  /** Does the route go the other way from where we are facing? */
+  private routeBehind(): boolean {
+    const r = this.route;
+    if (!r || this.offRouteSince >= 0 || r.length - this.routeProg < 10) return false;
+    const t = pointAlong(r, this.routeProg + 15);
+    if (dist(this.x, this.y, t.x, t.y) < 3) return false;
+    return Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y))) > 120;
   }
 
   /**
@@ -2028,10 +2074,11 @@ export class Game {
       }
     }
     if (line.deadEnd) {
-      if (end.d < 5) return this.speech.say(back ? 'This is the start of the road.' : 'The road ends here.', 'high');
+      if (end.d < 5) return this.speech.say(line.mapEdge ? 'This is the edge of the loaded map.' : back ? 'This is the start of the road.' : 'The road ends here.', 'high');
       const p = alongLine(line.pts, Math.max(0, end.d - 2));
       this.place(p.x, p.y, back ? normDeg(p.dir + 180) : p.dir, null);
-      return this.speech.say(`${moved(end.d)}${onto()}, to where the road ends.`, 'high');
+      const where = line.mapEdge ? `the edge of the loaded map${this.loading ? '; more is loading' : ''}` : 'where the road ends';
+      return this.speech.say(`${moved(end.d)}${onto()}, to ${where}.`, 'high');
     }
     this.speech.say(`No intersection or bend within ${fmtDistance(1500, u)}${back ? ' behind you' : ''}.`, 'high');
   }
@@ -2072,6 +2119,7 @@ export class Game {
     if (this.nextMan < 0) this.nextMan = r.maneuvers.length;
     this.spokenSteps.clear();
     this.offRouteSince = -1;
+    this.furthestProg = this.routeProg;
   }
 
   /** Shift+N: the last intersection behind you, described as you passed through it. */
@@ -2177,14 +2225,14 @@ export class Game {
       1500,
     );
     if (!r) return `No further intersection within ${fmtDistance(1500, u)}.`;
-    const ahead: Ahead = { node: r.node, forward: r.dist, arrival: r.arrival, deadEnd: r.deadEnd, arriveName: r.arriveName };
+    const ahead: Ahead = { node: r.node, forward: r.dist, arrival: r.arrival, deadEnd: r.deadEnd, mapEdge: r.mapEdge, arriveName: r.arriveName };
     return { ahead, key: this.junctionKey(r.node), cum: e.cum + r.dist, via: best.edge.way.name };
   }
 
   /** Parking-sensor style beeps that quicken as the next intersection approaches. */
   private updateProximityBeeps() {
     const a = this.ahead;
-    if (!this.settings.proximityBeeps || !a || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
+    if (!this.settings.proximityBeeps || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
     const base = this.vehicle.id === 'walker' ? 25 : this.vehicle.id === 'bicycle' ? 35 : 40;
     const range = Math.min(120, Math.max(base, this.speed * 3));
     const d = a.forward - this.speed * (this.clock - this.aheadAt); // ahead is refreshed every 0.1 s
