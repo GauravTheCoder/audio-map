@@ -1,3 +1,4 @@
+import { SAVED_CHANGED } from './favorites';
 import type { LatLon } from './geo';
 
 export interface Note extends LatLon {
@@ -21,4 +22,5 @@ export function saveNotes(list: Note[]) {
   } catch {
     // ignore
   }
+  window.dispatchEvent(new Event(SAVED_CHANGED));
 }

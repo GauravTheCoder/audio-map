@@ -2627,7 +2627,7 @@ export class Game {
   }
 
   /** Spot notes are stored by position, so they are put on the local map again after each start. */
-  private loadNotes() {
+  loadNotes() {
     this.notes = loadNotes().map((n) => ({ ...this.proj.toXY(n.lat, n.lon), text: n.text }));
   }
 

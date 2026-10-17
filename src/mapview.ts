@@ -19,6 +19,7 @@ export class MapView {
   private lastTrail = 0;
   private routeCoords: [number, number][] = [];
   private destCoords: [number, number][] = [];
+  private saved: FeatureCollection = { type: 'FeatureCollection', features: [] };
   private pending: { pos: LatLon; heading: number; speed: number } | null = null;
   private highContrast = false;
   headingUp = true;
@@ -89,6 +90,18 @@ export class MapView {
         ? { 'circle-radius': 16, 'circle-color': '#ff2bd6', 'circle-stroke-color': '#fff', 'circle-stroke-width': 4 }
         : { 'circle-radius': 9, 'circle-color': '#ffb300', 'circle-stroke-color': '#000', 'circle-stroke-width': 2 },
     });
+    m.addSource('saved', { type: 'geojson', data: this.saved });
+    m.addLayer({
+      id: 'saved',
+      type: 'circle',
+      source: 'saved',
+      paint: {
+        'circle-radius': hc ? 12 : 7,
+        'circle-color': ['case', ['==', ['get', 'kind'], 'note'], hc ? '#ffee00' : '#43a047', hc ? '#00e5ff' : '#e53935'],
+        'circle-stroke-color': hc ? '#000' : '#fff',
+        'circle-stroke-width': hc ? 4 : 2,
+      },
+    });
     m.addSource('cone', { type: 'geojson', data: points([]) });
     m.addLayer({
       id: 'cone',
@@ -124,6 +137,14 @@ export class MapView {
   setDestination(p: LatLon | null) {
     this.destCoords = p ? [[p.lon, p.lat]] : [];
     if (this.ready) (this.map.getSource('dest') as GeoJSONSource).setData(points(this.destCoords));
+  }
+
+  /** Saved places (red) and spot notes (green; yellow in high contrast). */
+  setSaved(places: LatLon[], notes: LatLon[]) {
+    const f = (list: LatLon[], kind: string) =>
+      list.map((p) => ({ type: 'Feature' as const, properties: { kind }, geometry: { type: 'Point' as const, coordinates: [p.lon, p.lat] } }));
+    this.saved = { type: 'FeatureCollection', features: [...f(places, 'place'), ...f(notes, 'note')] };
+    if (this.ready) (this.map.getSource('saved') as GeoJSONSource).setData(this.saved);
   }
 
   update(pos: LatLon, heading: number, speed: number) {

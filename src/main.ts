@@ -7,6 +7,7 @@ import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { Speech } from './speech';
+import { initManage } from './manage';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -408,6 +409,17 @@ $('note-form').addEventListener('submit', (e) => {
 noteDlg.addEventListener('cancel', (e) => {
   e.preventDefault();
   closeNote();
+});
+
+const manage = initManage({
+  map,
+  canGo: () => !!game,
+  go: (name, lat, lon) => {
+    manage.close();
+    closeMenu();
+    game?.setTargetLatLon(name, lat, lon, 0);
+  },
+  notesChanged: () => game?.loadNotes(),
 });
 
 $('menu-btn').addEventListener('click', () => openMenu('main'));

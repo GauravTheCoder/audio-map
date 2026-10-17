@@ -132,6 +132,7 @@
         <div class="actions">
           <button type="button" id="start-btn" class="primary">Start</button>
           <button type="button" id="resume-btn" hidden>Resume</button>
+          <button type="button" id="saved-btn">Saved places and notes</button>
         </div>
 
         <section aria-labelledby="keys-h">
@@ -230,7 +231,20 @@
       </form>
     </dialog>
 
-    <dialog id="note" aria-labelledby="note-title">
+    <dialog id="saved" aria-labelledby="saved-title">
+      <form method="dialog" id="saved-form">
+        <h2 id="saved-title">Saved places and notes</h2>
+        <p class="hint">Edit a name or note, then press Save. Escape to close.</p>
+        <p id="saved-status" class="hint" aria-live="polite"></p>
+        <h3 id="saved-places-h">Saved places</h3>
+        <ul id="saved-places" class="results" aria-labelledby="saved-places-h"></ul>
+        <h3 id="saved-notes-h">Spot notes</h3>
+        <ul id="saved-notes" class="results" aria-labelledby="saved-notes-h"></ul>
+        <button type="button" id="saved-close">Close</button>
+      </form>
+    </dialog>
+
+    <dialog id="note"aria-labelledby="note-title">
       <form method="dialog" id="note-form">
         <h2 id="note-title">Note for this spot</h2>
         <p class="hint">You will hear it whenever you pass within 25 metres. Escape to cancel.</p>
