@@ -6,6 +6,7 @@ import { MapView } from './mapview';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { Speech } from './speech';
+import { bindRoutes } from './routesui';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -211,6 +212,7 @@ startBtn.addEventListener('click', () => {
     game.onMenu = openMenu;
     game.onNavigate = () => openNav('navigate');
     game.onJump = () => openNav('jump');
+    bindRoutes(game, stage);
     game.onHud = (h) => {
       $('hud-street').textContent = h.street || '—';
       $('hud-speed').textContent = h.speed;
