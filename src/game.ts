@@ -1953,6 +1953,8 @@ export class Game {
         return this.clearDestination();
       case 'c':
         return this.cycleFilter();
+      case 'e':
+        return void this.whereAmI();
       case 'o':
         return this.routePreview();
       case 'x':
@@ -2033,14 +2035,14 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
   }
 
-  private locationText(): string {
+  private locationText(area = this.areaName): string {
     const parts: string[] = [];
     if (this.streetName) {
       let s = `On ${this.streetName}`;
@@ -2056,7 +2058,7 @@ export class Game {
       );
     }
     parts.push(`facing ${compass8(this.heading)}`);
-    if (this.areaName) parts.push(this.areaName);
+    if (area) parts.push(area);
     return parts.join('. ') + '.';
   }
 
@@ -2417,15 +2419,33 @@ export class Game {
 
   /** X: set the nearest bus stop or station as destination; again for the next nearest of five. */
   private nearestTransit() {
-    const stops = this.world!.places
-      .filter((p) => p.category === 'bus stop' || p.category === 'station' || p.category === 'bus station')
-      .map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }))
-      .sort((a, b) => a.d - b.d)
-      .slice(0, 5);
+    const stops = this.transitStops().slice(0, 5);
     if (!stops.length) return this.speech.say('No bus stops or stations on the loaded map.', 'high');
     const cur = this.dest ? stops.findIndex(({ p }) => p.x === this.dest!.x && p.y === this.dest!.y) : -1;
     const { p } = stops[(cur + 1) % stops.length];
     this.setTarget({ name: p.name, x: p.x, y: p.y });
+  }
+
+  private transitStops() {
+    return this.world!.places
+      .filter((p) => p.category === 'bus stop' || p.category === 'station' || p.category === 'bus station')
+      .map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }))
+      .sort((a, b) => a.d - b.d);
+  }
+
+  /** E: everything for when you are lost: street, area, nearest landmark and nearest transit stop. */
+  private async whereAmI() {
+    const u = this.settings.units;
+    const at = (p: Place) => `${p.name}, ${p.category}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y)))}`;
+    const near = this.world!.placesNear(this.x, this.y, 400);
+    const landmark = (near.find((n) => placeTier(n.place) >= 1) ?? near[0])?.place;
+    const stop = this.transitStops()[0]?.p;
+    const here = this.position;
+    const area = here ? await Promise.race([reverseGeocode(here), new Promise<null>((r) => setTimeout(r, 2500))]) : null;
+    const parts = [this.locationText(area ?? this.areaName)];
+    if (landmark) parts.push(`Nearest landmark: ${at(landmark)}.`);
+    if (stop) parts.push(`Nearest ${stop.category}: ${at(stop)}.`);
+    this.speech.say(parts.join(' '), 'high');
   }
 
   private nearby(r: number) {
