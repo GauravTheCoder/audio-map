@@ -11,6 +11,7 @@ import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
+import { conditionsReport } from './weather';
 import { World, type Edge, type GNode, type Junction, type Place, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
@@ -1901,8 +1902,14 @@ export class Game {
         return this.toggleTurnByTurn();
       case 'i':
         return this.instructions();
-      case 'w':
-        return this.whatsAround();
+      case 'w': {
+        if (!c.shift) return this.whatsAround();
+        const at = this.position;
+        if (!at) return;
+        this.speech.say('Checking conditions.', 'low');
+        void conditionsReport(at, this.settings.units).then((t) => this.speech.say(t, 'high'));
+        return;
+      }
       case ' ':
         return this.sonar();
       case 'Tab':
@@ -1981,7 +1988,7 @@ export class Game {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
-        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
+        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
