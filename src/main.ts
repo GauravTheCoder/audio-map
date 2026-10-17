@@ -1,5 +1,6 @@
 import './style.css';
 import { AudioEngine } from './audio/audio';
+import { setupBackup } from './backup';
 import { Game } from './game';
 import type { LatLon } from './geo';
 import { MapView } from './mapview';
@@ -336,5 +337,6 @@ document.addEventListener('keydown', (e) => {
 });
 
 bindSettings();
+setupBackup(update);
 select(selected);
 openMenu('main');
