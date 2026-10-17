@@ -142,7 +142,7 @@ export class Game {
   private y = 0;
   private heading = 0;
   private speed = 0;
-  /** live GPS mode: the device, not the keyboard, moves the traveller */
+  /** live GPS mode: once a fix has arrived, the device, not the keyboard, moves the traveller */
   private live: LiveGps | null = null;
   private liveFix: GpsFix | null = null;
   private restartingForGps = false;
@@ -579,7 +579,7 @@ export class Game {
   private step(dt: number) {
     this.clock += dt;
     const v = this.vehicle;
-    if (this.live) this.followGps(dt);
+    if (this.live && this.liveFix) this.followGps(dt);
     else this.drive(dt);
 
     this.updateRoad(false);
@@ -1942,7 +1942,7 @@ export class Game {
         return;
       case 'ArrowLeft':
       case 'ArrowRight': {
-        if (c.repeat || this.live) return;
+        if (c.repeat || (this.live && this.liveFix)) return;
         const dir = c.code === 'ArrowLeft' ? -1 : 1;
         if (c.ctrl) return this.snapTurn(dir);
         this.turnedDuringHold = false;
@@ -2350,14 +2350,16 @@ export class Game {
       (f) => void this.onGpsFix(live, f),
       (p) => {
         if (this.live !== live) return;
-        if (p === 'nosignal') return this.speech.say('No GPS signal. Staying at the last known position.', 'high');
+        if (p === 'nosignal') {
+          return this.speech.say(this.liveFix ? 'No GPS signal. Staying at the last known position.' : 'No GPS signal yet. Keyboard control until a location arrives.', 'high');
+        }
         this.stopLive();
         this.speech.say(p === 'denied' ? 'Location permission denied. Live GPS off.' : 'This device has no location support. Live GPS off.', 'high');
       },
       () => this.live === live && this.speech.say('GPS signal back.', 'normal'),
     );
     this.live = live;
-    this.speech.say('Live GPS on. Waiting for your location.', 'high');
+    this.speech.say('Live GPS on. Waiting for your location. The keyboard works until it arrives.', 'high');
     await live.start();
   }
 
