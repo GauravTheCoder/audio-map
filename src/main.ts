@@ -365,3 +365,8 @@ document.addEventListener('keydown', (e) => {
 bindSettings();
 select(selected);
 openMenu('main');
+
+// the dev server must not serve stale files from a worker
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
