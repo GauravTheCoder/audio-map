@@ -1,0 +1,99 @@
+// Live GPS mode: real location and compass from the device, to guide an actual walk.
+
+import { normDeg, relAngle } from './geo';
+
+export interface GpsFix {
+  lat: number;
+  lon: number;
+  /** metres per second; 0 when the device does not report it */
+  speed: number;
+  /** direction of travel in degrees, when the device reports one */
+  heading: number | null;
+}
+
+export type GpsProblem = 'denied' | 'nosignal' | 'unsupported';
+
+/** Below this speed the GPS course is noise, so it is not used for heading. */
+const MIN_COURSE_SPEED = 1;
+
+export interface OrientationLike {
+  webkitCompassHeading?: number;
+  alpha?: number | null;
+  absolute?: boolean;
+}
+
+/** Compass heading (0 = north, clockwise) from an orientation event, or null if it is not relative to north. */
+export function compassHeading(e: OrientationLike): number | null {
+  if (typeof e.webkitCompassHeading === 'number') return normDeg(e.webkitCompassHeading);
+  if (e.absolute && typeof e.alpha === 'number') return normDeg(360 - e.alpha);
+  return null;
+}
+
+/** The compass when there is one; otherwise the GPS course, but only while actually moving. */
+export function pickHeading(compass: number | null, course: number | null, speed: number): number | null {
+  if (compass !== null) return compass;
+  return course !== null && speed >= MIN_COURSE_SPEED ? normDeg(course) : null;
+}
+
+/** Move angle `from` a fraction k of the way to `to`, the short way round north. */
+export function easeAngle(from: number, to: number, k: number): number {
+  return normDeg(from + relAngle(from, to) * Math.max(0, Math.min(1, k)));
+}
+
+export class LiveGps {
+  compass: number | null = null;
+  private watch: number | null = null;
+  private lost = false;
+
+  constructor(
+    private onFix: (f: GpsFix) => void,
+    private onProblem: (p: GpsProblem) => void,
+    private onRecovered: () => void,
+  ) {}
+
+  private onOrientation = (e: Event) => {
+    const h = compassHeading(e as unknown as OrientationLike);
+    if (h !== null) this.compass = h;
+  };
+
+  /** Call from a key press or click: iOS only asks for compass permission inside a user gesture. */
+  async start(): Promise<boolean> {
+    if (!('geolocation' in navigator)) {
+      this.onProblem('unsupported');
+      return false;
+    }
+    const DOE = (window as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
+    // a refused compass is not fatal: GPS course still works while moving
+    const compassOk = DOE?.requestPermission ? DOE.requestPermission().then((r) => r === 'granted', () => false) : Promise.resolve(true);
+    if (await compassOk) {
+      window.addEventListener('deviceorientationabsolute', this.onOrientation);
+      window.addEventListener('deviceorientation', this.onOrientation);
+    }
+    this.watch = navigator.geolocation.watchPosition(
+      (p) => {
+        if (this.lost) {
+          this.lost = false;
+          this.onRecovered();
+        }
+        const c = p.coords;
+        this.onFix({ lat: c.latitude, lon: c.longitude, speed: c.speed ?? 0, heading: c.heading ?? null });
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) return this.onProblem('denied');
+        if (!this.lost) {
+          this.lost = true;
+          this.onProblem('nosignal');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 15_000 },
+    );
+    return true;
+  }
+
+  stop() {
+    if (this.watch !== null) navigator.geolocation.clearWatch(this.watch);
+    this.watch = null;
+    window.removeEventListener('deviceorientationabsolute', this.onOrientation);
+    window.removeEventListener('deviceorientation', this.onOrientation);
+  }
+}
