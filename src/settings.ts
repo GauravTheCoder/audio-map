@@ -27,6 +27,8 @@ export interface Settings {
   walkRoute: WalkRoute;
   soundProfile: SoundProfile;
   customSound: CustomSound;
+  /** the profile last chosen while using each vehicle */
+  vehicleProfiles: Partial<Record<VehicleId, SoundProfile>>;
   volume: number;
 }
 
@@ -49,6 +51,7 @@ const DEFAULTS: Settings = {
   walkRoute: 'shortest',
   soundProfile: 'simple',
   customSound: { places: 'notable', sideStreets: true, extras: true },
+  vehicleProfiles: {},
   volume: 0.8,
 };
 

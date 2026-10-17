@@ -85,12 +85,16 @@ function bindSettings() {
 
 function update(patch: Partial<Settings>) {
   Object.assign(settings, patch);
+  // a profile chosen with a vehicle is remembered for it, and comes back with it
+  if (patch.soundProfile) settings.vehicleProfiles = { ...settings.vehicleProfiles, [settings.vehicle]: patch.soundProfile };
+  else if (patch.vehicle && settings.vehicleProfiles[patch.vehicle]) settings.soundProfile = settings.vehicleProfiles[patch.vehicle]!;
   saveSettings(settings);
   speech.configure(settings.speechMode, settings.voiceRate);
   map.headingUp = settings.headingUpMap;
   applyDisplay();
   map.setHighContrast(settings.display === 'highContrast');
   game?.applySettings(settings);
+  syncVehicleRadios();
 }
 
 /** High contrast mode restyles the whole page (larger text, high contrast) through a root attribute. */

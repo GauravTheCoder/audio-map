@@ -507,6 +507,8 @@ export class Game {
     const prevRadius = this.vehicle.loadRadius;
     this.vehicle = VEHICLES[id];
     this.settings.vehicle = id;
+    const before = this.settings.soundProfile;
+    this.settings.soundProfile = this.settings.vehicleProfiles[id] ?? before;
     saveSettings(this.settings);
     this.speed = Math.min(this.speed, this.vehicle.maxSpeed);
     this.audio.setVehicle(id);
@@ -516,7 +518,7 @@ export class Game {
     }
     this.announcedNodes.clear();
     if (announce) {
-      this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.vehicle.maxSpeed, this.settings.units)}.`, 'high');
+      this.speech.say(`${this.vehicle.name}. Top speed ${fmtSpeedShort(this.vehicle.maxSpeed, this.settings.units)}.${this.settings.soundProfile === before ? '' : ` ${PROFILE_TEXT[this.settings.soundProfile]}`}`, 'high');
     }
     if (this.proj && this.vehicle.loadRadius > prevRadius && !this.loading) void this.load(false);
   }
@@ -2006,6 +2008,7 @@ export class Game {
       case 'p':
         if (c.shift) {
           this.settings.soundProfile = nextProfile(this.settings.soundProfile);
+          this.settings.vehicleProfiles = { ...this.settings.vehicleProfiles, [this.vehicle.id]: this.settings.soundProfile };
           saveSettings(this.settings);
           return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
         }
