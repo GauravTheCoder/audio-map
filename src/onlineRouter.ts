@@ -1,7 +1,8 @@
-// Online routing via the public OSRM servers run by FOSSGIS (routing.openstreetmap.de).
+// Online routing via the public OSRM servers run by FOSSGIS (routing.openstreetmap.de), and for
+// street-only walking routes their Valhalla server, which can be told to avoid footpaths.
 // Works for any distance without loading map data. Usage policy: light, non-commercial use.
 
-import { bearing, dist, relAngle, type Projection } from './geo';
+import { bearing, dist, relAngle, type LatLon, type Projection } from './geo';
 import { pointAlong, type Maneuver, type Route, type RoutePoint } from './router';
 import type { VehicleId } from './settings';
 
@@ -10,6 +11,7 @@ const BASE: Partial<Record<VehicleId, string>> = {
   bicycle: 'https://routing.openstreetmap.de/routed-bike/route/v1/bike',
   car: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
 };
+const VALHALLA = 'https://valhalla1.openstreetmap.de/route';
 const TIMEOUT_MS = 12_000;
 
 /** OSRM direction words as angles; used instead of its bearings, which can be odd at corners. */
@@ -51,15 +53,22 @@ export async function fetchOnlineRoute(
   to: { x: number; y: number },
   nameNear: (x: number, y: number, dir: number) => string | null,
   signal?: AbortSignal,
+  /** walking: keep to streets and their pavements rather than footpaths, alleys and tracks */
+  streets = false,
 ): Promise<Route | null> {
   const base = BASE[vehicle];
   if (!base) return null;
   const a = proj.toLatLon(from.x, from.y);
   const b = proj.toLatLon(to.x, to.y);
+  const json = vehicle === 'walker' && streets ? await valhallaStreets(a, b, signal) : await osrm(base, vehicle, a, b, from.heading, signal);
+  return json && buildRoute(json, vehicle, proj, to, nameNear);
+}
+
+async function osrm(base: string, vehicle: VehicleId, a: LatLon, b: LatLon, heading: number, signal?: AbortSignal): Promise<OsrmResponse | null> {
   const coords = `${a.lon.toFixed(6)},${a.lat.toFixed(6)};${b.lon.toFixed(6)},${b.lat.toFixed(6)}`;
   const url = `${base}/${coords}?overview=full&geometries=geojson&steps=true`;
   // cars should set off the way they are facing; fall back to no preference if that can't be matched
-  const tries = vehicle === 'car' ? [`${url}&bearings=${Math.round(from.heading)},90;`, url] : [url];
+  const tries = vehicle === 'car' ? [`${url}&bearings=${Math.round(heading)},90;`, url] : [url];
   let json: OsrmResponse | null = null;
   for (const u of tries) {
     const sig = signal ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
@@ -68,7 +77,40 @@ export async function fetchOnlineRoute(
     json = (await res.json()) as OsrmResponse;
     if (json.code === 'Ok' && json.routes?.length) break;
   }
-  const route = json?.code === 'Ok' ? json.routes?.[0] : undefined;
+  return json;
+}
+
+/**
+ * A walking route along streets: Valhalla's pedestrian costing with footpaths ("walkways"),
+ * alleys, driveways and tracks made costly, so they are used only when there is no sensible
+ * street. Answers in OSRM's format, so the same reading applies.
+ */
+async function valhallaStreets(a: LatLon, b: LatLon, signal?: AbortSignal): Promise<OsrmResponse | null> {
+  const body = {
+    locations: [
+      { lat: a.lat, lon: a.lon },
+      { lat: b.lat, lon: b.lon },
+    ],
+    costing: 'pedestrian',
+    costing_options: { pedestrian: { walkway_factor: 6, sidewalk_factor: 1, alley_factor: 4, driveway_factor: 5, use_tracks: 0 } },
+    format: 'osrm',
+    shape_format: 'geojson',
+    directions_options: { units: 'kilometers' },
+  };
+  const sig = signal ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
+  const res = await fetch(VALHALLA, { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' }, signal: sig });
+  if (!res.ok && res.status !== 400) throw new Error(`Routing server ${res.status}`);
+  return (await res.json()) as OsrmResponse;
+}
+
+function buildRoute(
+  json: OsrmResponse,
+  vehicle: VehicleId,
+  proj: Projection,
+  to: { x: number; y: number },
+  nameNear: (x: number, y: number, dir: number) => string | null,
+): Route | null {
+  const route = json.code === 'Ok' ? json.routes?.[0] : undefined;
   if (!route) return null;
 
   // geometry → local points with distance along the route

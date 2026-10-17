@@ -3,6 +3,8 @@ export type Units = 'metric' | 'imperial';
 export type VehicleId = 'walker' | 'bicycle' | 'car' | 'helicopter';
 /** high contrast with larger text, roads and markers (the default), or the standard map look */
 export type DisplayMode = 'highContrast' | 'standard';
+/** walking routes: shortest (any footpath) or along streets and their pavements */
+export type WalkRoute = 'shortest' | 'streets';
 
 export interface Settings {
   vehicle: VehicleId;
@@ -19,6 +21,7 @@ export interface Settings {
   beaconSound: boolean;
   headingUpMap: boolean;
   display: DisplayMode;
+  walkRoute: WalkRoute;
   volume: number;
 }
 
@@ -37,6 +40,7 @@ const DEFAULTS: Settings = {
   beaconSound: true,
   headingUpMap: true,
   display: 'highContrast',
+  walkRoute: 'shortest',
   volume: 0.8,
 };
 

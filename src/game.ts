@@ -186,6 +186,7 @@ export class Game {
   private lastRouteCalc = -1e9;
   private nextRouteCheck = 0;
   private lastIPress = 0;
+  private lastDPress = 0;
   /** furthest along the route we have been, to notice going back along it */
   private furthestProg = 0;
   private lastWrongWay = -1e9;
@@ -1361,15 +1362,22 @@ export class Game {
           uTurnPenalty: 60,
           costFactor: (w) => (w.type === 'cycleway' ? 0.7 : w.type === 'primary' || w.type === 'trunk' ? 1.3 : 1),
         };
-      default:
-        // walkers prefer named streets over unnamed paths so directions stay easy to follow
+      default: {
+        // walkers prefer named streets over unnamed paths so directions stay easy to follow;
+        // "streets only" makes paths, tracks and alleys costly enough to use only when needed
+        const streets = this.settings.walkRoute === 'streets';
+        const offStreet = ['footway', 'path', 'track', 'service', 'cycleway', 'steps'];
         return {
           canUse,
           obeyOneway: false,
           minFactor: 1,
           uTurnPenalty: 15,
-          costFactor: (w) => (w.type === 'steps' ? 1.5 : !w.named && ['footway', 'path', 'track', 'service'].includes(w.type) ? 1.4 : 1),
+          costFactor: (w) =>
+            streets
+              ? offStreet.includes(w.type) && !w.named ? 5 : w.type === 'steps' ? 3 : 1
+              : w.type === 'steps' ? 1.5 : !w.named && ['footway', 'path', 'track', 'service'].includes(w.type) ? 1.4 : 1,
         };
+      }
     }
   }
 
@@ -1463,7 +1471,15 @@ export class Game {
     if (hasOnlineRouting(vehicle)) {
       this.routePending = true;
       try {
-        const r = await fetchOnlineRoute(vehicle, this.proj, { x: this.x, y: this.y, heading: this.heading }, t, (x, y, dir) => this.namedRoadNear(x, y, dir));
+        const r = await fetchOnlineRoute(
+          vehicle,
+          this.proj,
+          { x: this.x, y: this.y, heading: this.heading },
+          t,
+          (x, y, dir) => this.namedRoadNear(x, y, dir),
+          undefined,
+          this.settings.walkRoute === 'streets',
+        );
         if (req !== this.routeReq || this.dest !== t || this.vehicle.id !== vehicle) return; // superseded
         if (r) return this.useRoute(r, announce);
       } catch (e) {
@@ -1556,7 +1572,8 @@ export class Game {
     const first = r.maneuvers[this.nextRealIndex(0)];
     const startAim = pointAlong(r, 15);
     const turnAround = Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, startAim.x, startAim.y))) > 120 ? 'Turn around. ' : '';
-    const lead = `Route ${fmtDistance(r.length, u)}${r.partial ? ', as far as the map has loaded; it will extend as you go' : ''}. `;
+    const kind = this.vehicle.id === 'walker' && this.settings.walkRoute === 'streets' ? 'Street route' : 'Route';
+    const lead = `${kind} ${fmtDistance(r.length, u)}${r.partial ? ', as far as the map has loaded; it will extend as you go' : ''}. `;
     const step =
       first.kind === 'arrive'
         ? r.partial
@@ -1613,6 +1630,18 @@ export class Game {
     }
     if (double && steps.length <= 3 && r.partial) parts.push('The route continues as more map loads');
     this.speech.say(parts.join('. ') + '.', 'high');
+  }
+
+  /** D twice: walking routes along streets only, or the shortest way (which may use footpaths). */
+  private toggleWalkRoute() {
+    this.settings.walkRoute = this.settings.walkRoute === 'streets' ? 'shortest' : 'streets';
+    saveSettings(this.settings);
+    const what = this.settings.walkRoute === 'streets' ? 'Walking routes: streets only.' : 'Walking routes: shortest, may use footpaths.';
+    if (this.vehicle.id !== 'walker') return this.speech.say(`${what} This applies when walking.`, 'high');
+    if (this.dest && this.settings.turnByTurn) {
+      this.speech.say(`${what} Re-planning.`, 'high');
+      void this.computeRoute(true);
+    } else this.speech.say(what, 'high');
   }
 
   private clearRoute() {
@@ -1892,10 +1921,14 @@ export class Game {
       case 'j':
         if (c.ctrl) this.onJump?.();
         return;
-      case 'd':
-        if (!c.ctrl) return this.distanceToGo();
-        this.onNavigate?.();
-        return;
+      case 'd': {
+        if (c.ctrl) return this.onNavigate?.();
+        // pressed twice quickly: switch walking routes between shortest and streets only
+        const now = performance.now();
+        const double = now - this.lastDPress < 400;
+        this.lastDPress = double ? 0 : now;
+        return double ? this.toggleWalkRoute() : this.distanceToGo();
+      }
       case 'm':
         this.settings.headingUpMap = !this.settings.headingUpMap;
         this.map.headingUp = this.settings.headingUpMap;
@@ -1949,7 +1982,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',

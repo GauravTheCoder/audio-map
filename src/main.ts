@@ -32,7 +32,7 @@ let game: Game | null = null;
 // ---------- settings form ----------
 
 function bindSettings() {
-  for (const name of ['vehicle', 'speechMode', 'display'] as const) {
+  for (const name of ['vehicle', 'speechMode', 'display', 'walkRoute'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
       r.checked = r.value === settings[name];
       r.addEventListener('change', () => {
@@ -71,8 +71,11 @@ function applyDisplay() {
   else delete document.documentElement.dataset.display;
 }
 
+/** settings that can also change by key (vehicle 1–4, walking routes D twice) */
 function syncVehicleRadios() {
-  for (const r of document.querySelectorAll<HTMLInputElement>('input[name="vehicle"]')) r.checked = r.value === settings.vehicle;
+  for (const name of ['vehicle', 'walkRoute'] as const) {
+    for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) r.checked = r.value === settings[name];
+  }
 }
 
 // ---------- location selection ----------
