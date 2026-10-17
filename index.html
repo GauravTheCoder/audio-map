@@ -139,6 +139,16 @@
           <button type="button" id="learn-btn">Learn the keys</button>
         </div>
 
+        <section aria-labelledby="backup-h">
+          <h2 id="backup-h">Your data</h2>
+          <div class="actions">
+            <button type="button" id="export-btn">Export my data</button>
+            <label for="import-file">Import data (JSON file)</label>
+            <input type="file" id="import-file" accept="application/json,.json" />
+          </div>
+          <p id="backup-status" class="hint" aria-live="polite"></p>
+        </section>
+
         <section aria-labelledby="keys-h">
           <h2 id="keys-h">Keyboard commands</h2>
           <table class="keys">
