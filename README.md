@@ -2,6 +2,8 @@
 
 Explore real city streets by sound and keyboard. Built for blind and low-vision travellers, with a visual map for sighted helpers.
 
+**Try it:** https://soundaryakp1999.github.io/audio-map/
+
 ```sh
 npm install
 npm run dev      # http://localhost:5173
