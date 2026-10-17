@@ -8,7 +8,7 @@ import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
-import { extrasWanted, junctionQuiet, nextProfile, placeWanted, PROFILE_TEXT } from './profiles';
+import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
@@ -1324,7 +1324,8 @@ export class Game {
 
   private checkPlaces() {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
-    if (this.clock - this.lastPlaceSpoken < 1.2) return;
+    // faster vehicles pass places quicker, so leave longer between cues
+    if (this.clock - this.lastPlaceSpoken < 1.2 + Math.min(2.8, this.speed / 6)) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
       if (!placeWanted(this.settings.soundProfile, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
@@ -1332,7 +1333,9 @@ export class Game {
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
       if (Math.abs(rel) > 120 && d > 10) continue; // already passed it
       this.announcedPlaces.set(place.id, this.clock);
-      this.audio.placeCue(place.group, rel, 0.2);
+      // nearer is louder and clearer; landmarks stand out over everyday places
+      const far = Math.min(1, d / this.vehicle.passRadius);
+      this.audio.placeCue(place.group, rel, (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1), undefined, far);
       this.speech.say(`${place.name}, ${place.category}, ${sideWord(rel)}${d > 15 ? `, ${fmtDistance(d, this.settings.units)}` : ''}`, 'low');
       this.lastPlaceSpoken = this.clock;
       break;
@@ -2457,7 +2460,7 @@ export class Game {
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
       const when = t0 + (normDeg(rel) / 360) * 2.2; // sweep clockwise from straight ahead
       const level = 0.12 + 0.3 * (1 - d / this.vehicle.scanRadius);
-      this.audio.placeCue(place.group, rel, level, when);
+      this.audio.placeCue(place.group, rel, level, when, d / this.vehicle.scanRadius);
     }
     this.speech.say(list.length ? `${list.length} places` : 'Nothing nearby', 'low');
   }

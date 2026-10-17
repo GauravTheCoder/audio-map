@@ -183,8 +183,8 @@ export class AudioEngine {
     o.stop(when + dur + 0.05);
   }
 
-  /** A node positioned around the listener. rel: degrees clockwise from ahead. Sounds behind are muffled. */
-  spatial(rel: number, level: number): AudioNode {
+  /** A node positioned around the listener. rel: degrees clockwise from ahead. Sounds behind are muffled; far (0 near .. 1 at the edge of range) dulls them too. */
+  spatial(rel: number, level: number, far = 0): AudioNode {
     const ctx = this.ctx;
     const rad = (rel * Math.PI) / 180;
     const p = ctx.createPanner();
@@ -197,7 +197,7 @@ export class AudioEngine {
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     const behind = Math.max(0, -Math.cos(rad)); // 0 ahead .. 1 directly behind
-    lp.frequency.value = 12000 - behind * 10000;
+    lp.frequency.value = (12000 - behind * 10000) * (1 - 0.7 * far);
     const g = ctx.createGain();
     g.gain.value = level;
     g.connect(lp).connect(p).connect(this.master);
@@ -226,8 +226,8 @@ export class AudioEngine {
     }
   }
 
-  placeCue(group: PlaceGroup, rel: number, level = 0.25, when = this.now) {
-    const dest = this.spatial(rel, level);
+  placeCue(group: PlaceGroup, rel: number, level = 0.25, when = this.now, far = 0) {
+    const dest = this.spatial(rel, level, far);
     const f = GROUP_PITCH[group];
     switch (group) {
       case 'food': // cup clink
