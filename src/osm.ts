@@ -27,6 +27,8 @@ export interface RawRoads {
 export interface RawPlaces {
   places: RawPlace[];
   signals: Set<number>;
+  /** spots to warn about on foot: pedestrian crossings and level crossings */
+  crossings?: { lat: number; lon: number; text: string }[];
 }
 
 export type RetryNotice = (attempt: number) => void;
@@ -115,10 +117,13 @@ export async function fetchPlaces(center: LatLon, radius: number, signal: AbortS
   nwr["railway"="station"]["name"];
   node["highway"="bus_stop"];
   node["highway"="traffic_signals"];
+  node["highway"="crossing"];
+  node["railway"="level_crossing"];
 );
 out center tags qt;`;
   const places: RawPlace[] = [];
   const signals = new Set<number>();
+  const crossings: NonNullable<RawPlaces['crossings']> = [];
   for (const el of await overpass(q, signal, onRetry)) {
     const t = el.tags;
     if (!t) continue;
@@ -127,13 +132,17 @@ out center tags qt;`;
     if (lat === undefined || lon === undefined) continue;
     if (t.highway === 'traffic_signals') {
       if (el.type === 'node') signals.add(el.id);
+    } else if (t.highway === 'crossing') {
+      crossings.push({ lat, lon, text: t.crossing === 'traffic_signals' ? 'Crossing with signals' : 'Pedestrian crossing' });
+    } else if (t.railway === 'level_crossing') {
+      crossings.push({ lat, lon, text: 'Railway crossing' });
     } else if (t.highway === 'bus_stop') {
       places.push({ id: `n${el.id}`, lat, lon, tags: { ...t, name: t.name ?? 'Bus stop' } });
     } else if (t.name) {
       places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: t });
     }
   }
-  return { places, signals };
+  return { places, signals, crossings };
 }
 
 async function overpass(query: string, signal: AbortSignal, onRetry?: RetryNotice): Promise<OverpassEl[]> {

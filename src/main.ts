@@ -41,7 +41,7 @@ function bindSettings() {
       });
     }
   }
-  for (const id of ['announceStreets', 'announcePlaces', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'] as const) {
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'] as const) {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));

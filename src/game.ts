@@ -155,6 +155,7 @@ export class Game {
   private ahead: Ahead | null = null;
   private announcedNodes = new Map<number, number>();
   private announcedPlaces = new Map<string, number>();
+  private announcedHazards = new Map<string, number>();
   private nextPlaceCheck = 0;
   private nextAheadCheck = 0;
   /** member nodes of the junction the traveller is standing in, if any */
@@ -250,6 +251,7 @@ export class Game {
     this.browse = null;
     this.announcedNodes.clear();
     this.announcedPlaces.clear();
+    this.announcedHazards.clear();
     this.inJunction = null;
     this.ring = null;
     this.announcedBends.clear();
@@ -600,6 +602,7 @@ export class Game {
     if (this.clock > this.nextPlaceCheck) {
       this.nextPlaceCheck = this.clock + 0.25;
       this.checkPlaces();
+      this.checkHazards();
     }
     this.updateDestination();
 
@@ -1299,6 +1302,21 @@ export class Game {
     }
     if (!hasAhead) parts.push('no road straight ahead');
     return parts.join('; ');
+  }
+
+  /** Crossings and steps just ahead, for walkers and cyclists. */
+  private checkHazards() {
+    if (!this.settings.announceHazards || this.speed < 0.3 || (this.vehicle.id !== 'walker' && this.vehicle.id !== 'bicycle')) return;
+    const reach = this.vehicle.id === 'walker' ? 30 : 45;
+    for (const { hazard: h, d } of this.world!.hazardsNear(this.x, this.y, reach)) {
+      if (Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y))) > 35) continue;
+      if (h.text === 'Steps' && this.road?.type === 'steps') continue;
+      const key = `${h.text}|${Math.round(h.x)},${Math.round(h.y)}`;
+      if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
+      this.announcedHazards.set(key, this.clock);
+      this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}`, 'high');
+      break;
+    }
   }
 
   private checkPlaces() {

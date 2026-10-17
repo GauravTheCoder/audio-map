@@ -12,6 +12,7 @@ export interface Settings {
   voiceRate: number;
   units: Units;
   announcePlaces: boolean;
+  announceHazards: boolean;
   announceStreets: boolean;
   announceHeadingAfterTurn: boolean;
   compassTicks: boolean;
@@ -31,6 +32,7 @@ const DEFAULTS: Settings = {
   voiceRate: 1.3,
   units: 'metric',
   announcePlaces: true,
+  announceHazards: true,
   announceStreets: true,
   announceHeadingAfterTurn: true,
   compassTicks: true,
