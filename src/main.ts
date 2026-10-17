@@ -24,14 +24,15 @@ const menu = $<HTMLDialogElement>('menu');
 const startBtn = $<HTMLButtonElement>('start-btn');
 const resumeBtn = $<HTMLButtonElement>('resume-btn');
 
-const map = new MapView($('map'), selected);
+applyDisplay();
+const map = new MapView($('map'), selected, settings.display === 'lowVision');
 map.headingUp = settings.headingUpMap;
 let game: Game | null = null;
 
 // ---------- settings form ----------
 
 function bindSettings() {
-  for (const name of ['vehicle', 'speechMode'] as const) {
+  for (const name of ['vehicle', 'speechMode', 'display'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
       r.checked = r.value === settings[name];
       r.addEventListener('change', () => {
@@ -59,7 +60,15 @@ function update(patch: Partial<Settings>) {
   saveSettings(settings);
   speech.configure(settings.speechMode, settings.voiceRate);
   map.headingUp = settings.headingUpMap;
+  applyDisplay();
+  map.setLowVision(settings.display === 'lowVision');
   game?.applySettings(settings);
+}
+
+/** Low vision mode restyles the whole page (larger text, high contrast) through a root attribute. */
+function applyDisplay() {
+  if (settings.display === 'lowVision') document.documentElement.dataset.display = 'low-vision';
+  else delete document.documentElement.dataset.display;
 }
 
 function syncVehicleRadios() {
@@ -163,7 +172,7 @@ $('geo-btn').addEventListener('click', () => {
 
 // ---------- menu / game flow ----------
 
-function openMenu(focus: 'main' | 'search') {
+function openMenu(focus: 'main' | 'search' | 'settings') {
   game?.pause();
   resumeBtn.hidden = !game;
   startBtn.textContent = game ? 'Go there' : 'Start';
@@ -171,6 +180,10 @@ function openMenu(focus: 'main' | 'search') {
   if (!menu.open) menu.showModal();
   if (focus === 'search') {
     $<HTMLInputElement>('search').focus();
+  } else if (focus === 'settings') {
+    const box = $('display-settings');
+    box.scrollIntoView({ block: 'start' });
+    box.querySelector<HTMLInputElement>('input:checked')?.focus();
   } else {
     (game ? resumeBtn : startBtn).focus();
   }
@@ -293,6 +306,14 @@ stage.addEventListener('focus', () => {
 });
 
 window.addEventListener('resize', () => map.resize());
+
+// Control + comma: settings, from anywhere outside the explorer (the explorer handles it itself)
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === ',' && document.activeElement !== stage) {
+    e.preventDefault();
+    openMenu('settings');
+  }
+});
 
 bindSettings();
 select(selected);

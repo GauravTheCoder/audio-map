@@ -199,7 +199,7 @@ export class Game {
 
   readonly input = new Input();
   onHud?: (h: Hud) => void;
-  onMenu?: (focus: 'main' | 'search') => void;
+  onMenu?: (focus: 'main' | 'search' | 'settings') => void;
   onNavigate?: () => void;
 
   constructor(
@@ -1752,6 +1752,7 @@ export class Game {
       case '.':
         return this.stepIntersection(1);
       case ',':
+        if (c.ctrl) return this.onMenu?.('settings');
         return this.stepIntersection(-1);
       case 'b':
         if (c.shift) {
@@ -1841,7 +1842,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
         'Control D searches for a destination. D says the distance to go, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
-        '1 to 4 change vehicle. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );

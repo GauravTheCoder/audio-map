@@ -26,6 +26,69 @@
   }
 }
 
+/* Low vision: high contrast and larger everything, whatever the system theme. */
+:root[data-display='low-vision'] {
+  --bg: #000000;
+  --panel: #000000;
+  --text: #ffffff;
+  --muted: #e6e6e6;
+  --border: #ffffff;
+  --accent: #ffd400;
+  --accent-text: #000000;
+  --focus: #00ff66;
+  --hud-bg: #000000;
+  color-scheme: dark;
+}
+:root[data-display='low-vision'] body {
+  font-size: 24px;
+}
+:root[data-display='low-vision'] :focus-visible {
+  outline-width: 5px;
+  outline-offset: 3px;
+}
+:root[data-display='low-vision'] #hud {
+  top: 12px;
+  left: 12px;
+  max-width: min(640px, calc(100vw - 24px));
+  padding: 14px 20px;
+  border: 3px solid #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 0 0 3px #000000;
+}
+:root[data-display='low-vision'] .hud-street {
+  font-size: 2.4rem;
+  color: #ffd400;
+}
+:root[data-display='low-vision'] .hud-row {
+  font-size: 1.6rem;
+  font-weight: 700;
+  gap: 24px;
+}
+:root[data-display='low-vision'] .hud-area,
+:root[data-display='low-vision'] .hud-status {
+  font-size: 1.1rem;
+}
+:root[data-display='low-vision'] .hud-dest {
+  font-size: 1.4rem;
+  color: #00e5ff;
+}
+:root[data-display='low-vision'] button,
+:root[data-display='low-vision'] input[type='search'],
+:root[data-display='low-vision'] select {
+  border-width: 2px;
+}
+:root[data-display='low-vision'] input[type='radio'],
+:root[data-display='low-vision'] input[type='checkbox'] {
+  width: 28px;
+  height: 28px;
+}
+:root[data-display='low-vision'] dialog#menu {
+  width: min(720px, 100vw);
+}
+:root[data-display='low-vision'] .maplibregl-ctrl-attrib {
+  font-size: 14px;
+}
+
 * {
   box-sizing: border-box;
 }

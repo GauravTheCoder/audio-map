@@ -1,6 +1,8 @@
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
 export type VehicleId = 'walker' | 'bicycle' | 'car' | 'helicopter';
+/** default look, or high contrast with larger text, roads and markers */
+export type DisplayMode = 'default' | 'lowVision';
 
 export interface Settings {
   vehicle: VehicleId;
@@ -16,6 +18,7 @@ export interface Settings {
   turnByTurn: boolean;
   beaconSound: boolean;
   headingUpMap: boolean;
+  display: DisplayMode;
   volume: number;
 }
 
@@ -33,6 +36,7 @@ const DEFAULTS: Settings = {
   turnByTurn: true,
   beaconSound: true,
   headingUpMap: true,
+  display: 'default',
   volume: 0.8,
 };
 
