@@ -14,7 +14,7 @@ Headphones recommended (place sounds are positioned in 3D around you).
 
 ## How it works
 
-- **Map data:** OpenStreetMap via the Overpass API (roads first, then places), cached in the browser for 14 days. Public Overpass servers are often busy: requests rotate across mirrors with backoff, and a soft pulse plays while loading.
+- **Map data:** OpenStreetMap. Roads and places are first built from OpenFreeMap vector tiles (`src/tiles.ts`), ready in a second or two; the fuller Overpass data (roundabouts, traffic signals) follows in the background and replaces them. Overpass responses are cached in the browser for 14 days, and requests rotate across mirrors with backoff.
 - **Search:** Nominatim. **Visual map:** MapLibre GL with OpenFreeMap tiles (no API keys needed).
 - **Speech:** your screen reader via ARIA live regions, or the browser's built-in voice (lower latency, interruptible).
 - **Sound:** synthesized with the Web Audio API. No audio files.

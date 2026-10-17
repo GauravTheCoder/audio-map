@@ -3,7 +3,8 @@
 import { AudioEngine } from './audio/audio';
 import { Input, type Command } from './input';
 import { MapView } from './mapview';
-import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode } from './osm';
+import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
+import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
 import { Speech } from './speech';
@@ -275,7 +276,7 @@ export class Game {
     const where = this.streetName ? `On ${this.streetName}` : 'Not on a road';
     this.speech.say(
       `Ready. ${this.vehicle.name}. ${where}, facing ${compass16(this.heading)}.` +
-        `${this.areaName ? ` ${this.areaName}.` : ''} ${world.ways.length} roads loaded.` +
+        `${this.areaName ? ` ${this.areaName}.` : ''} ${world.ways.length} roads${world.places.length ? ` and ${world.places.length} places` : ''} loaded.` +
         ` Hold up arrow to move. Press F1 for help.`,
       'normal',
     );
@@ -292,58 +293,88 @@ export class Game {
     return () => clearInterval(id);
   }
 
+  /**
+   * Load the roads and places around the traveller. Map tiles arrive in a second or two and are
+   * used first; the fuller Overpass data (roundabouts, traffic signals, exact junctions) follows in
+   * the background and quietly replaces them. Away from the start, where the current map still
+   * covers you, Overpass gets a few seconds' head start so you keep its details when it is quick.
+   */
   private async load(initial: boolean): Promise<boolean> {
     this.loading = true;
     const center = this.proj.toLatLon(this.x, this.y);
     const at = { x: this.x, y: this.y };
     const radius = this.vehicle.loadRadius;
     const abort = (this.loadAbort = new AbortController());
+    let installed = false;
     let warned = false;
     const onRetry = () => {
-      if (initial && !warned) {
+      if (initial && !warned && !installed) {
         warned = true;
         this.speech.say('The map server is busy. Still trying.', 'normal');
       }
     };
+    const quiet = <T,>(p: Promise<T>) => (p.catch(() => undefined), p);
+    const areaP = quiet(reverseGeocode(center));
+    const tilesP = quiet(fetchTileArea(center, radius, abort.signal));
+    const roadsP = quiet(fetchRoads(center, radius, abort.signal, onRetry));
+    const placesP = quiet(fetchPlaces(center, radius, abort.signal, onRetry));
     try {
-      const areaP = reverseGeocode(center);
-      const placesP = fetchPlaces(center, radius, abort.signal, onRetry);
-      placesP.catch(() => undefined); // handled below; avoid unhandled-rejection noise
-      const world = new World(this.proj, await fetchRoads(center, radius, abort.signal, onRetry));
+      const full = async () => ({ world: new World(this.proj, await roadsP), full: true });
+      const fromTiles = async (delay: number) => {
+        const t = await tilesP;
+        // give Overpass a head start, unless it has already failed
+        if (delay) await Promise.race([new Promise((r) => setTimeout(r, delay)), roadsP.then(() => new Promise(() => undefined), () => undefined)]);
+        const w = new World(this.proj, t.roads);
+        w.addPlaces(t.places);
+        return { world: w, full: false };
+      };
+      const first = await Promise.any([full(), fromTiles(initial ? 0 : 10_000)]);
+      const world = first.world;
+      if (abort.signal.aborted) return false;
 
-      if (initial) {
-        if (world.isEmpty) {
-          this.audio.error();
-          this.speech.say('No roads found here. Press Escape to choose another location.', 'high');
+      if (first.full) {
+        // Overpass won: places as before (straight away at the start; before swapping later on)
+        if (initial) {
+          placesP.then(
+            (p) => {
+              if (this.world !== world) return;
+              world.addPlaces(p);
+              this.speech.say(`${world.places.length} places loaded.`, 'low');
+            },
+            () => {
+              if (!abort.signal.aborted && this.world === world) this.speech.say('Could not load places. Roads are available.', 'normal');
+            },
+          );
+        } else {
+          try {
+            world.addPlaces(await placesP);
+          } catch (e) {
+            if (abort.signal.aborted) throw e;
+            console.warn('places failed', e);
+          }
         }
-        // start moving on roads right away; places arrive when ready
-        placesP.then(
-          (p) => {
-            if (this.world !== world) return;
-            world.addPlaces(p);
-            this.speech.say(`${world.places.length} places loaded.`, 'low');
-          },
-          () => {
-            if (!abort.signal.aborted && this.world === world) this.speech.say('Could not load places. Roads are available.', 'normal');
-          },
-        );
       } else {
-        // swap in the new area only once it is complete, so nothing disappears while moving
-        try {
-          world.addPlaces(await placesP);
-        } catch (e) {
-          if (abort.signal.aborted) throw e;
-          console.warn('places failed', e);
-        }
+        void this.upgradeWorld(world, roadsP, placesP, tilesP, abort);
+      }
+      if (initial && world.isEmpty) {
+        this.audio.error();
+        this.speech.say('No roads found here. Press Escape to choose another location.', 'high');
       }
 
-      this.world = world;
+      if (this.world) this.swapWorld(world);
+      else this.world = world;
+      installed = true;
       if (this.dest && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
       this.loadCenter = at;
-      const area = await areaP;
+      // the area name is nice to have, not worth holding up the start for
+      const area = await Promise.race([areaP, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
       if (area) {
         if (!initial && area !== this.areaName) this.speech.say(`Entering ${area}`, 'low');
         this.areaName = area;
+      } else {
+        void areaP.then((late) => {
+          if (late && this.loadAbort === abort) this.areaName = late;
+        });
       }
       return true;
     } catch (e) {
@@ -352,7 +383,7 @@ export class Game {
       this.audio.error();
       this.speech.say(
         initial
-          ? 'Could not load map data. The map server may be busy. Press Escape, then Start to try again.'
+          ? 'Could not load map data. The map servers may be busy. Press Escape, then Start to try again.'
           : 'Could not load more map data. Will retry shortly.',
         'high',
       );
@@ -361,6 +392,59 @@ export class Game {
     } finally {
       if (this.loadAbort === abort) this.loading = false;
     }
+  }
+
+  /** When the Overpass data for an area arrives, put it in place of the tile-built map. */
+  private async upgradeWorld(
+    tileWorld: World,
+    roadsP: Promise<RawRoads>,
+    placesP: Promise<RawPlaces>,
+    tilesP: Promise<{ places: RawPlaces }>,
+    abort: AbortController,
+  ) {
+    let world: World;
+    try {
+      world = new World(this.proj, await roadsP);
+    } catch {
+      return; // keep the tile map; the next load tries again
+    }
+    try {
+      world.addPlaces(await placesP);
+    } catch {
+      world.addPlaces((await tilesP).places); // Overpass places failed: the tiles' will do
+    }
+    if (abort.signal.aborted || this.world !== tileWorld) return; // a newer area has replaced it
+    this.swapWorld(world);
+  }
+
+  /**
+   * Replace the map while travelling. Node ids differ between maps, so what was already announced,
+   * and the junction we stand in, are carried over by position.
+   */
+  private swapWorld(next: World) {
+    const prev = this.world!;
+    const announced = new Map<number, number>();
+    for (const [id, t] of this.announcedNodes) {
+      const n = prev.nodes.get(id);
+      if (!n || this.clock - t > 120) continue;
+      for (const m of next.nodesNear(n.x, n.y, 12)) announced.set(m.id, t);
+    }
+    this.announcedNodes = announced;
+    if (this.inJunction) {
+      const ids = new Set<number>();
+      for (const id of this.inJunction) {
+        const n = prev.nodes.get(id);
+        if (n) for (const m of next.nodesNear(n.x, n.y, 12)) if (next.isIntersection(m, this.filter)) ids.add(m.id);
+      }
+      const seed = next.nodes.get([...ids][0]);
+      this.inJunction = seed ? new Set(next.junction(seed, this.filter, this.junctionRadius).nodes.map((m) => m.id)) : null;
+    }
+    this.world = next;
+    this.ring = null; // picked up again from the new map, if we are in one
+    this.ahead = null;
+    this.stepCursor = null;
+    this.lastN = null;
+    this.browse = null;
   }
 
   focus(el: HTMLElement) {
