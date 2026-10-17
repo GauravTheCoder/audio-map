@@ -24,7 +24,7 @@ export function bindRoutes(game: Game, stage: HTMLElement) {
   function renderList() {
     list.replaceChildren();
     const routes = loadRoutes();
-    status.textContent = routes.length ? `${routes.length} saved routes. Choose one to start it.` : 'No saved routes. Set a destination, then press Shift Q.';
+    status.textContent = routes.length ? `${routes.length} saved route${routes.length === 1 ? '' : 's'}. Choose one to start it.` : 'No saved routes. Set a destination, then press Shift Q.';
     for (const r of routes) {
       const li = document.createElement('li');
       const go = document.createElement('button');
@@ -76,6 +76,7 @@ export function bindRoutes(game: Game, stage: HTMLElement) {
       if (!n) return;
       saveRoute({ name: n, start: trip.start, dest: trip.dest });
       close();
+      game.announce(`Route ${n} saved.`);
     };
   };
 

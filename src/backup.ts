@@ -30,8 +30,9 @@ const ENUMS: Record<string, readonly string[]> = {
   units: ['metric', 'imperial'],
   display: ['highContrast', 'standard'],
   walkRoute: ['shortest', 'streets'],
+  soundProfile: ['full', 'simple', 'minimal', 'custom'],
 };
-const BOOLS = ['announcePlaces', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'];
+const BOOLS = ['announcePlaces', 'announceHazards', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'];
 const RANGES: Record<string, [number, number]> = { voiceRate: [0.5, 3], volume: [0, 1] };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);

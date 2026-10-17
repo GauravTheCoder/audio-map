@@ -96,6 +96,8 @@ export function initManage(d: Deps) {
     );
     if (!favs.length) places.innerHTML = '<li>No saved places. Press Y in the explorer to save one.</li>';
     if (!ns.length) notes.innerHTML = '<li>No notes. Press V in the explorer to leave one.</li>';
+    // rebuilding the rows drops the focused control, which would send keyboard users back to the top of the page
+    if (dlg.open && !dlg.contains(document.activeElement)) (places.querySelector<HTMLElement>('input') ?? $('saved-close')).focus();
   }
 
   $('saved-btn').addEventListener('click', () => {

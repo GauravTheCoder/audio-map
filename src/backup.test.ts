@@ -30,8 +30,7 @@ describe('validate', () => {
     expect(validate({ app: 'audio-map', places: 'x', notes: 5, settings: [] })).toEqual({ places: [], notes: [], settings: {} });
   });
 
-  // BUG: announceHazards is a boolean setting but is missing from BOOLS, so a backup never restores it.
-  it.fails('imports the announceHazards setting', () => {
+  it('imports the announceHazards setting', () => {
     expect(validate({ app: 'audio-map', settings: { announceHazards: false } }).settings).toEqual({ announceHazards: false });
   });
 });

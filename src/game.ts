@@ -2589,6 +2589,11 @@ export class Game {
   }
 
   /** Where you are and where you are going, as lat/lon, for saving a named route. */
+  /** For dialogs outside the game that need to confirm something aloud. */
+  announce(text: string) {
+    this.speech.say(text, 'high');
+  }
+
   currentTrip() {
     const d = this.dest;
     if (!d || !this.proj) return null;
