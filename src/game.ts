@@ -1,6 +1,7 @@
 // Game loop: vehicle physics, road awareness, announcements and keyboard commands.
 
 import { AudioEngine } from './audio/audio';
+import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
@@ -248,7 +249,10 @@ export class Game {
     this.vehicle = VEHICLES[settings.vehicle];
     this.input.onCommand = (c) => this.command(c);
     this.input.onKeyUp = (code) => this.keyUp(code);
-    this.speech.onSpeakingChange = (s) => this.audio.duck(s);
+    this.speech.onSpeakingChange = (s) => {
+      this.speaking = s;
+      this.audio.duck(s, duckGain(this.speed));
+    };
   }
 
   // ---------------- lifecycle ----------------
@@ -1354,7 +1358,7 @@ export class Game {
   private checkPlaces() {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
     // faster vehicles pass places quicker, so leave longer between cues
-    if (this.clock - this.lastPlaceSpoken < 1.2 + Math.min(2.8, this.speed / 6)) return;
+    if (this.clock - this.lastPlaceSpoken < placeSpeechGap(this.speed)) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
       if (!placeWanted(this.settings, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
@@ -1364,8 +1368,9 @@ export class Game {
       this.announcedPlaces.set(place.id, this.clock);
       // nearer is louder and clearer; landmarks stand out over everyday places
       const far = Math.min(1, d / this.vehicle.passRadius);
-      this.audio.placeCue(place.group, rel, (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1), undefined, far);
-      this.speech.say(`${place.name}, ${place.category}, ${sideWord(rel)}${d > 15 ? `, ${fmtDistance(d, this.settings.units)}` : ''}`, 'low');
+      const level = (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1) * cueLevelScale(this.speed, this.speaking);
+      this.audio.placeCue(place.group, rel, level, undefined, far);
+      this.speech.say(placeSpeech(place.name, place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
       this.lastPlaceSpoken = this.clock;
       break;
     }
@@ -2080,6 +2085,7 @@ export class Game {
     }
   }
 
+  private speaking = false;
   private calibrationTimers: number[] = [];
 
   /** Says "left", plays a tone there, then the same for right and ahead. */

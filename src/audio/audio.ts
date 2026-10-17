@@ -111,8 +111,8 @@ export class AudioEngine {
   }
 
   /** Lower continuous sounds while speech plays (built-in voice only). */
-  duck(on: boolean) {
-    this.bed.gain.setTargetAtTime(on ? 0.45 : 1, this.now, 0.08);
+  duck(on: boolean, depth = 0.45) {
+    this.bed.gain.setTargetAtTime(on ? depth : 1, this.now, 0.08);
   }
 
   setVehicle(id: VehicleId) {
