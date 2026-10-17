@@ -1937,6 +1937,7 @@ export class Game {
       case 'k':
         return this.help();
       case 'h':
+        if (c.shift) return this.calibrate();
         return this.speech.say(`Facing ${compass16(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
       case 's':
         return this.speech.say(
@@ -2079,6 +2080,18 @@ export class Game {
     }
   }
 
+  private calibrationTimers: number[] = [];
+
+  /** Says "left", plays a tone there, then the same for right and ahead. */
+  private calibrate() {
+    this.calibrationTimers.forEach(clearTimeout);
+    this.speech.say('Headphone check. You should hear each tone from the side named.', 'high');
+    this.calibrationTimers = ([['Left', -90], ['Right', 90], ['Ahead', 0]] as const).flatMap(([word, rel], i) => [
+      window.setTimeout(() => this.speech.say(word, 'high'), 4000 + i * 2200),
+      window.setTimeout(() => this.audio.testTone(rel), 4800 + i * 2200),
+    ]);
+  }
+
   private help() {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
@@ -2086,7 +2099,7 @@ export class Game {
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
-        'Page up and down change volume. F searches for a location. Escape opens the menu.',
+        'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
   }

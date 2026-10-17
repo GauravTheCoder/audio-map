@@ -276,6 +276,11 @@ export class AudioEngine {
     }
   }
 
+  /** Calibration tone through the same panner as place cues. rel: degrees clockwise from ahead. */
+  testTone(rel: number) {
+    this.tone(660, { dur: 0.6, dest: this.spatial(rel, 0.3), level: 0.3 });
+  }
+
   /**
    * Destination beacon ping. Stereo position = left/right; pitch = ahead (high) vs behind (low).
    * When you are pointing at it (within 10 degrees) a second, higher note confirms you are on course.

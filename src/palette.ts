@@ -14,6 +14,7 @@ const a = (name: string, label: string, key: string, shift = false, ctrl = false
 export const ACTIONS: Action[] = [
   a('Align with the road', 'R', 'r'),
   a('Heading', 'H', 'h'),
+  a('Headphone check', 'Shift H', 'H', true),
   a('Speed', 'S', 's'),
   a('Location', 'L', 'l'),
   a('Next intersection', 'N', 'n'),
