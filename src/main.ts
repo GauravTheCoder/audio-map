@@ -8,6 +8,7 @@ import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview } from './preview';
+import type { PlaceGroup } from './world';
 import { Speech } from './speech';
 import { Tutorial } from './tutorial';
 import { bindRoutes } from './routesui';
@@ -70,6 +71,13 @@ function bindSettings() {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
+  }
+  for (const el of document.querySelectorAll<HTMLInputElement>('input[data-group]')) {
+    const group = el.dataset.group as PlaceGroup;
+    el.checked = !settings.mutedGroups.includes(group);
+    el.addEventListener('change', () =>
+      update({ mutedGroups: el.checked ? settings.mutedGroups.filter((g) => g !== group) : [...settings.mutedGroups, group] }),
+    );
   }
   for (const id of ['voiceRate', 'volume'] as const) {
     const el = $<HTMLInputElement>(id);

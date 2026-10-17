@@ -15,7 +15,7 @@ export interface CustomSound {
   extras: boolean;
 }
 
-type Pick_ = Pick<Settings, 'soundProfile' | 'customSound'>;
+type Pick_ = Pick<Settings, 'soundProfile' | 'customSound' | 'mutedGroups'>;
 type Preset = Exclude<SoundProfile, 'custom'>;
 
 type ByVehicle<T> = Record<VehicleId, T>;
@@ -60,6 +60,7 @@ export function placeTier(p: Place): number {
 }
 
 export const placeWanted = (s: Pick_, v: VehicleId, p: Place) =>
+  !s.mutedGroups.includes(p.group) &&
   placeTier(p) >= (s.soundProfile === 'custom' ? CUSTOM_TIER[s.customSound.places] : MIN_TIER[s.soundProfile][v]);
 
 export const extrasWanted = (s: Pick_, v: VehicleId) => (s.soundProfile === 'custom' ? s.customSound.extras : EXTRAS[s.soundProfile][v]);

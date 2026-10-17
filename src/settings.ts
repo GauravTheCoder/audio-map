@@ -1,4 +1,5 @@
 import type { CustomSound, SoundProfile } from './profiles';
+import type { PlaceGroup } from './world';
 
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
@@ -30,6 +31,8 @@ export interface Settings {
   /** the profile last chosen while using each vehicle */
   vehicleProfiles: Partial<Record<VehicleId, SoundProfile>>;
   volume: number;
+  /** place groups silenced while moving; on-demand lookups ignore this */
+  mutedGroups: PlaceGroup[];
 }
 
 const DEFAULTS: Settings = {
@@ -53,6 +56,7 @@ const DEFAULTS: Settings = {
   customSound: { places: 'notable', sideStreets: true, extras: true },
   vehicleProfiles: {},
   volume: 0.8,
+  mutedGroups: [],
 };
 
 const KEY = 'audio-map-settings';
@@ -64,13 +68,15 @@ export function loadSettings(): Settings {
       const s = { ...DEFAULTS, ...JSON.parse(raw) } as Settings;
       // earlier names: 'default' (never chosen, just the old default) and 'lowVision'
       if (s.display !== 'standard') s.display = 'highContrast';
+      if (!Array.isArray(s.mutedGroups)) s.mutedGroups = [];
       return s;
     }
   } catch {
     // storage unavailable: fall through to defaults
   }
-  return { ...DEFAULTS };
+  return { ...DEFAULTS, mutedGroups: [] };
 }
+
 
 export function saveSettings(s: Settings): void {
   try {
