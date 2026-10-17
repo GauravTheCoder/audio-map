@@ -2891,6 +2891,11 @@ export class Game {
   }
 
   /** Convert a lat/lon to world coordinates (for teleport targets found by search). */
+  /** What the tutorial checks to see that a key did something. */
+  get snap() {
+    return { ready: !!this.world, speed: this.speed, heading: this.heading, vehicle: this.vehicle.id as string, hasDest: !!this.dest };
+  }
+
   toXY(p: LatLon) {
     return this.proj.toXY(p.lat, p.lon);
   }
