@@ -209,6 +209,8 @@ export class Game {
   onMenu?: (focus: 'main' | 'search' | 'settings') => void;
   onNavigate?: () => void;
   onJump?: () => void;
+  /** sees every key first; returning true consumes it */
+  onKey?: (c: Command) => boolean;
 
   constructor(
     private settings: Settings,
@@ -1831,6 +1833,7 @@ export class Game {
   // ---------------- keyboard ----------------
 
   private command(c: Command): boolean | void {
+    if (this.onKey?.(c)) return;
     if (!this.world && c.key !== 'Escape' && c.key !== 'F1') {
       if (!c.repeat) this.speech.say(this.loading ? 'Still loading map data.' : 'No map loaded. Press Escape for the menu.', 'high');
       return;

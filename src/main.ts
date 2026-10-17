@@ -6,6 +6,7 @@ import { MapView } from './mapview';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { Speech } from './speech';
+import { Tutorial } from './tutorial';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -28,6 +29,7 @@ applyDisplay();
 const map = new MapView($('map'), selected, settings.display === 'highContrast');
 map.headingUp = settings.headingUpMap;
 let game: Game | null = null;
+let tutorial: Tutorial | null = null;
 
 // ---------- settings form ----------
 
@@ -204,13 +206,15 @@ function closeMenu() {
   }
 }
 
-startBtn.addEventListener('click', () => {
+function startGame(learn = false) {
   if (!game) {
     const audio = new AudioEngine(settings.volume); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
     game.onMenu = openMenu;
     game.onNavigate = () => openNav('navigate');
     game.onJump = () => openNav('jump');
+    tutorial = new Tutorial(speech, audio);
+    game.onKey = (c) => tutorial!.onKey(c);
     game.onHud = (h) => {
       $('hud-street').textContent = h.street || '—';
       $('hud-speed').textContent = h.speed;
@@ -224,8 +228,11 @@ startBtn.addEventListener('click', () => {
   }
   if (menu.open) menu.close();
   game.focus(stage);
-  void game.start(selected, selected.name);
-});
+  void game.start(selected, selected.name).then(() => learn && tutorial!.begin());
+}
+
+startBtn.addEventListener('click', () => startGame());
+$('learn-btn').addEventListener('click', () => startGame(true));
 
 resumeBtn.addEventListener('click', closeMenu);
 
