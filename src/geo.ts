@@ -128,11 +128,13 @@ export function alongLine(pts: { x: number; y: number; d: number }[], d: number)
  * The first bend in a road line: where the road turns at least minTurn degrees one way within
  * `span` metres. Gentle wobbles under 3° are ignored. at = distance to where the bend starts,
  * turn = total turn (negative left), keys = its corner points (so it is announced once).
+ * Bends starting before `from` metres are skipped.
  */
 export function findBend(
   pts: { x: number; y: number; d: number }[],
   minTurn: number,
   span: number,
+  from = 0,
 ): { at: number; turn: number; length: number; keys: string[] } | null {
   const pieces: { d: number; b: number; x: number; y: number }[] = [];
   for (let i = 0; i + 1 < pts.length; i++) {
@@ -143,7 +145,7 @@ export function findBend(
   }
   const turns = pieces.slice(1).map((p, i) => ({ d: p.d, t: relAngle(pieces[i].b, p.b), key: `${Math.round(p.x)},${Math.round(p.y)}` }));
   for (let i = 0; i < turns.length; i++) {
-    if (Math.abs(turns[i].t) < 3) continue;
+    if (Math.abs(turns[i].t) < 3 || turns[i].d < from) continue;
     const sign = Math.sign(turns[i].t);
     let total = 0;
     let end = i;

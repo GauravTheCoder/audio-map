@@ -115,8 +115,10 @@
               <tr><td>H</td><td>Heading</td></tr>
               <tr><td>S</td><td>Speed</td></tr>
               <tr><td>L</td><td>Location: street, nearest cross street, area</td></tr>
-              <tr><td>N</td><td>Next intersection along the road: full description the first time, then just the remaining distance (use it as a countdown). In a roundabout: the next exit</td></tr>
+              <tr><td>N</td><td>Next intersection along the road: full description the first time, then just the remaining distance (use it as a countdown). Mentions bends on the way. In a roundabout: the next exit</td></tr>
+              <tr><td>N twice</td><td>Move to the next intersection or bend along the road. At a bend you stop just before it; turn with Control + arrow, then carry on</td></tr>
               <tr><td>Shift + N</td><td>The last intersection behind you</td></tr>
+              <tr><td>Shift + N twice</td><td>Move back to the previous intersection or bend, still facing the same way</td></tr>
               <tr><td>Period / Comma</td><td>Step forward / back through the intersections down the road; N returns to the nearest</td></tr>
               <tr><td>Shift + B</td><td>Toggle intersection proximity beeps</td></tr>
               <tr><td>W</td><td>What's around: nearest places with clock directions</td></tr>
@@ -155,8 +157,9 @@
             <li>Click while turning: every 10 degrees. Double chime: north, east, south or west.</li>
             <li>Place sounds come from the direction of the place: cup clink for food, two-tone chime for transport, bell for culture, water drop for parks, plain tone for shops and services.</li>
             <li>Beacon ping: your destination. Left or right in your headphones shows which side it is on; pitch shows ahead (high) or behind (low). A second, higher note means you are heading straight at it. It repeats faster as you get closer. With turn-by-turn on, the beacon points a little way along the route, so following it follows the streets.</li>
-            <li>Rising two notes on one side: your turn is just ahead, toward that side. The ding-dong bell marks the intersection itself.</li>
-            <li>Bends: the road's bends are announced ahead with their direction and size, e.g. "Road bends right in 40 metres, about 60 degrees". With road assist off, the rising two notes play on that side as the bend begins.</li>
+            <li>Following a route: at the intersection where you turn, a bright rising chord plays from the side to turn to, and you hear "Here: turn left onto…". Intersections you go straight through get a single soft bell instead of the ding-dong. Earlier reminders count the intersections, e.g. "at the second intersection".</li>
+            <li>Rising two notes on one side: a turn that is not at an intersection (or a bend, with road assist off) is starting now, toward that side.</li>
+            <li>Bends: the road's bends are announced ahead with their direction and size, e.g. "Road bends right in 40 metres". Walkers also hear the angle ("about 60 degrees"), as they do for each road at an intersection. With road assist off, the rising two notes play on that side as the bend begins.</li>
             <li>Roundabouts: on the approach you hear every exit in order and where it leads ("second North Road, straight on"). Inside, each exit is called out as it comes up ("Exit 2, North Road, on your right") and the ding-dong bell plays at it, with a ping from the exit's direction: that is the moment to turn off.</li>
           </ul>
           <p class="hint">Headphones recommended. Map data © OpenStreetMap contributors.</p>

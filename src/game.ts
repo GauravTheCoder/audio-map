@@ -156,6 +156,12 @@ export class Game {
   /** bends already announced (keys of their corner points), with the time */
   private announcedBends = new Map<string, number>();
   private cuedBends = new Set<string>();
+  /** N / Shift+N double press */
+  private lastNPress = 0;
+  private lastNShift = false;
+  /** the bend the last jump stopped at, so the next jump goes past it */
+  private jumpBend = new Set<string>();
+  private jumpHinted = false;
 
   // turning
   private turnHold: { dir: -1 | 1; since: number } | null = null;
@@ -542,7 +548,7 @@ export class Game {
     const w = this.world!;
     const ring = road.roundabout;
     const traverse = ring ? (wy: Way) => wy.roundabout : (wy: Way) => wy.name === road.name && this.vehicle.canUse(wy);
-    const here = w.nearestRoad(this.x, this.y, roadHalfWidth(road.type) + 6, traverse);
+    const here = w.roadFacing(this.x, this.y, roadHalfWidth(road.type) + 6, this.heading, traverse);
     if (!here) return null;
     let forwards = Math.abs(relAngle(this.heading, here.dir)) <= 90;
     const way = here.seg.way;
@@ -709,9 +715,18 @@ export class Game {
     }
     const j = w.junction(near, this.filter, this.junctionRadius);
     this.inJunction = new Set(j.nodes.map((m) => m.id));
-    this.audio.atIntersection(this.exitAngles(j));
-    // the moment to decide: name every road and which way it goes from here
     const ringNode = j.nodes.find((n) => w.onRing(n));
+    // following a route: a distinct chime at the intersection where it turns, a quieter bell elsewhere
+    const turn = ringNode ? null : this.routeTurnAt(j.nodes);
+    if (turn) {
+      this.audio.routeTurnHere(turn.rel);
+      for (let k = 0; k <= 2; k++) this.spokenSteps.add(k);
+      this.speech.say(`Here: ${this.stepWithThen(turn)}.`, 'high');
+      return;
+    }
+    if (this.route && this.offRouteSince < 0 && !ringNode) this.audio.routePassIntersection(this.exitAngles(j));
+    else this.audio.atIntersection(this.exitAngles(j));
+    // the moment to decide: name every road and which way it goes from here
     if (ringNode) {
       // the entry to a roundabout: its exits were listed on the approach
       const rb = w.ringExits(ringNode, this.vehicle.canUse);
@@ -766,12 +781,12 @@ export class Game {
   }
 
   /** The road we are following and the segment's ends in our direction of travel. */
-  private roadStart(maxDist = 20, filter = this.filter): { hit: RoadHit; from: GNode; to: GNode } | null {
+  private roadStart(maxDist = 20, filter = this.filter, heading = this.heading): { hit: RoadHit; from: GNode; to: GNode } | null {
     if (this.vehicle.id === 'helicopter') return null;
     const w = this.world!;
-    const hit = w.nearestRoad(this.x, this.y, maxDist, filter);
+    const hit = w.roadFacing(this.x, this.y, maxDist, heading, filter);
     if (!hit) return null;
-    const forwards = Math.abs(relAngle(this.heading, hit.dir)) <= 90;
+    const forwards = Math.abs(relAngle(heading, hit.dir)) <= 90;
     return { hit, from: w.nodes.get(forwards ? hit.seg.a : hit.seg.b)!, to: w.nodes.get(forwards ? hit.seg.b : hit.seg.a)! };
   }
 
@@ -849,9 +864,7 @@ export class Game {
     const s = this.roadStart();
     if (!s || s.hit.seg.way.roundabout) return;
     const w = this.world!;
-    const v = this.vehicle.id;
-    const span = v === 'walker' ? 25 : Math.max(35, this.speed * 3);
-    const minTurn = v === 'walker' ? 40 : 30;
+    const { span, minTurn } = this.bendParams(this.speed);
     const skip = this.inJunction;
     const range = Math.min(400, this.speed * 5 + 30 + span * 1.5); // the whole of a bend that is about to be announced
     const isStop = (n: GNode) => w.isIntersection(n, this.filter) && !skip?.has(n.id);
@@ -872,14 +885,56 @@ export class Game {
     if (bend.at > this.speed * 5 + 20) return;
     if (bend.keys.some((k) => this.clock - (this.announcedBends.get(k) ?? -1e9) < 60)) return; // already told (or already in it)
     for (const k of bend.keys) this.announcedBends.set(k, this.clock);
+    const when = bend.at < 8 ? 'now' : `in ${fmtDistance(bend.at, this.settings.units)}`;
+    this.speech.say(`${cap(this.bendWords(bend))} ${when}${this.bendDetail(bend)}.`, 'normal');
+  }
+
+  /** What counts as a bend: turning at least minTurn degrees within span metres (longer at speed). */
+  private bendParams(speed: number): { span: number; minTurn: number } {
+    return this.vehicle.id === 'walker' ? { span: 25, minTurn: 40 } : { span: Math.max(35, speed * 3), minTurn: 30 };
+  }
+
+  /** Bends between here and the junction ahead, not counting one right at the junction. */
+  private bendsBefore(a: Ahead): { at: number; turn: number; length: number; keys: string[] }[] {
+    const s = this.roadStart();
+    if (!s) return [];
+    const w = this.world!;
+    const skip = this.inJunction;
+    const isStop = (n: GNode) => w.isIntersection(n, this.filter) && !skip?.has(n.id);
+    const line = w.roadLine(s.hit.hit.px, s.hit.hit.py, s.from, s.to, s.hit.seg.way.name, this.filter, isStop, a.forward + 5);
+    const { span, minTurn } = this.bendParams(0);
+    const out: { at: number; turn: number; length: number; keys: string[] }[] = [];
+    let from = 0;
+    for (let guard = 0; guard < 30; guard++) {
+      const b = findBend(line.pts, minTurn, span, from);
+      if (!b || a.forward - (b.at + b.length) < 12) break;
+      out.push(b);
+      from = b.at + b.length + 1;
+    }
+    return out;
+  }
+
+  /** "Road bends right in 40 metres, and 2 more bends, then " (empty if there are none). */
+  private bendsLead(bends: { at: number; turn: number; length: number }[]): string {
+    if (!bends.length) return '';
+    const b = bends[0];
+    const when = b.at < 8 ? 'now' : `in ${fmtDistance(b.at, this.settings.units)}`;
+    const more = bends.length > 1 ? `, and ${bends.length - 1} more bend${bends.length > 2 ? 's' : ''}` : '';
+    return `${this.bendWords(b)} ${when}${this.bendDetail(b)}${more}, then `;
+  }
+
+  /** "road bends right", "sharp bend left", "road curves right" */
+  private bendWords(bend: { turn: number }): string {
     const a = Math.abs(bend.turn);
-    const deg = Math.round(a / 5) * 5;
     const side = bend.turn < 0 ? 'left' : 'right';
-    const what = a >= 110 ? `Sharp bend ${side}` : a < 45 ? `Road curves ${side}` : `Road bends ${side}`;
-    const u = this.settings.units;
-    const when = bend.at < 8 ? 'now' : `in ${fmtDistance(bend.at, u)}`;
-    const over = bend.length >= 30 ? `, over ${fmtDistance(bend.length, u)}` : '';
-    this.speech.say(`${what} ${when}, about ${deg} degrees${over}.`, 'normal');
+    return a >= 110 ? `sharp bend ${side}` : a < 45 ? `road curves ${side}` : `road bends ${side}`;
+  }
+
+  /** For walkers: ", about 60 degrees, over 30 metres". Faster vehicles keep it short. */
+  private bendDetail(bend: { turn: number; length: number }): string {
+    if (this.vehicle.id !== 'walker') return '';
+    const over = bend.length >= 20 ? `, over ${fmtDistance(bend.length, this.settings.units)}` : '';
+    return `, about ${deg5(bend.turn)} degrees${over}`;
   }
 
   /** A roundabout at (or just beyond) the junction ahead, with its exits in order. */
@@ -908,7 +963,7 @@ export class Game {
    * on your right. First exit Oak Street, right; second Main Street, straight on; ..."
    * Each exit's direction is where it leaves the ring, seen from the way you arrive.
    */
-  private roundaboutText(rb: Roundabout, a: Ahead): string {
+  private roundaboutText(rb: Roundabout, a: Ahead, lead?: string): string {
     const side = rb.clockwise ? 'left' : 'right';
     const cx = rb.nodes.reduce((t, n) => t + n.x, 0) / rb.nodes.length;
     const cy = rb.nodes.reduce((t, n) => t + n.y, 0) / rb.nodes.length;
@@ -921,7 +976,7 @@ export class Game {
     });
     const n = rb.exits.length;
     return (
-      `Roundabout in ${fmtDistance(a.forward, this.settings.units)}, ${n} exit${n === 1 ? '' : 's'}. ` +
+      `${lead ?? `Roundabout in ${fmtDistance(a.forward, this.settings.units)}, `}${n} exit${n === 1 ? '' : 's'}. ` +
       `Turn ${side} to enter; traffic goes ${rb.clockwise ? 'clockwise' : 'anticlockwise'}, so exits are on your ${side}. ` +
       `${list.join('; ')}.`
     );
@@ -1120,8 +1175,11 @@ export class Game {
       const key = `${e.way.name}|${dir}`;
       if (seen.has(key)) continue;
       seen.add(key);
+      // walkers also hear the angle; faster vehicles get the short form
+      let said = dir;
+      if (this.vehicle.id === 'walker' && a >= 10) said = dir === 'ahead' ? `ahead, ${deg5(a)} degrees ${side}` : `${dir} ${deg5(a)} degrees`;
       if (!groups.has(e.way.name)) groups.set(e.way.name, []);
-      groups.get(e.way.name)!.push(compass ? `${dir} heading ${compass8(b)}` : dir);
+      groups.get(e.way.name)!.push(compass ? `${said} heading ${compass8(b)}` : said);
     }
     if (!groups.size) return null;
     const parts: string[] = [];
@@ -1408,7 +1466,7 @@ export class Game {
         ? r.partial
           ? 'Follow this road.'
           : `${dest.name} is ${fmtDistance(first.d, u)} along this road.`
-        : `In ${fmtDistance(first.d, u)}, ${this.stepText(first, dest.name)}.`;
+        : `In ${fmtDistance(first.d, u)}, ${this.whichIntersection(first)}${this.stepText(first, dest.name)}.`;
     // the instruction was just given: don't repeat the early reminders
     const th = this.stepThresholds;
     for (let k = 0; k < 2; k++) if (first.d <= th[k]) this.spokenSteps.add(k);
@@ -1454,7 +1512,7 @@ export class Game {
     for (const m of steps.slice(0, double ? 3 : 1)) {
       const gap = Math.max(0, m.d - at);
       const text = this.stepText(m, this.dest.name);
-      parts.push(parts.length ? `Then after ${fmtDistance(gap, u)}, ${text}` : `In ${fmtDistance(gap, u)}, ${text}`);
+      parts.push(parts.length ? `Then after ${fmtDistance(gap, u)}, ${text}` : `In ${fmtDistance(gap, u)}, ${this.whichIntersection(m)}${text}`);
       at = m.d;
     }
     if (double && steps.length <= 3 && r.partial) parts.push('The route continues as more map loads');
@@ -1491,6 +1549,56 @@ export class Game {
       default:
         return [400, 150, Math.max(30, this.speed * 2.5)];
     }
+  }
+
+  /** The route's next turn, if it is at the junction made of these nodes. */
+  private routeTurnAt(nodes: GNode[]): Maneuver | null {
+    if (!this.route || this.offRouteSince >= 0) return null;
+    const m = this.upcoming();
+    if (!m || !this.turnAtJunction(m)) return null;
+    return nodes.some((n) => dist(n.x, n.y, m.x, m.y) <= 10) ? m : null;
+  }
+
+  /** Is this turn at an intersection, where arriving in it gives the "turn here" cue? */
+  private turnAtJunction(m: Maneuver): boolean {
+    if (m.kind === 'arrive' || m.kind === 'roundabout') return false;
+    const w = this.world!;
+    return w.nodesNear(m.x, m.y, 10).some((n) => w.isIntersection(n, this.filter));
+  }
+
+  /**
+   * "at the second intersection, " for a turn with other intersections before it: the ones whose
+   * bell you will hear on the way. Empty when there are none or too many to be useful.
+   */
+  private whichIntersection(m: Maneuver): string {
+    const r = this.route;
+    if (!r || !this.turnAtJunction(m)) return '';
+    const w = this.world!;
+    const keys = new Set<number>();
+    const turnNodes = w.nodesNear(m.x, m.y, 10).filter((n) => w.isIntersection(n, this.filter));
+    const turnKeys = new Set(turnNodes.map((n) => this.junctionKey(n)));
+    for (let d = this.routeProg + 2; d < m.d; d += 4) {
+      const p = pointAlong(r, d);
+      for (const n of w.nodesNear(p.x, p.y, 20)) {
+        if (this.inJunction?.has(n.id) || !w.isIntersection(n, this.filter)) continue;
+        if (dist(n.x, n.y, p.x, p.y) > this.turnZone(n) || dist(n.x, n.y, m.x, m.y) <= 10) continue;
+        if (w.onRing(n)) return ''; // roundabouts on the way would make the count unclear
+        const k = this.junctionKey(n);
+        if (!turnKeys.has(k)) keys.add(k);
+      }
+    }
+    if (keys.size > 3) return '';
+    return keys.size === 0 ? 'at the next intersection, ' : `at the ${ordinal(keys.size + 1)} intersection, `;
+  }
+
+  /** The instruction for turn m, with the one after it if that follows closely. */
+  private stepWithThen(m: Maneuver): string {
+    const r = this.route!;
+    const dest = this.dest?.name ?? '';
+    const text = this.stepText(m, dest);
+    const n2 = r.maneuvers[this.nextRealIndex(r.maneuvers.indexOf(m) + 1)];
+    const then = n2 && n2.d - m.d < 60 && !(n2.kind === 'arrive' && r.partial) ? `, then ${this.stepText(n2, dest)}` : '';
+    return text + then;
   }
 
   /** Is the next turn on the route within d metres? */
@@ -1567,18 +1675,20 @@ export class Game {
     const m = r.maneuvers[mi];
     if (!m || (m.kind === 'arrive' && r.partial)) return;
     const d = m.d - this.routeProg;
+    const atJunction = this.turnAtJunction(m);
     for (let k = 2; k >= 0; k--) {
       if (d > th[k] || this.spokenSteps.has(k)) continue;
+      // a turn at an intersection is called when you are in that intersection (checkInJunction),
+      // not by distance, which could fall on a side street just before it
+      if (k === 2 && atJunction) continue;
       if (k < 2 && d <= th[k + 1] * 1.4) continue; // the closer reminder is coming up anyway
       for (let j = 0; j <= k; j++) this.spokenSteps.add(j); // never say an earlier reminder after a later one
-      const text = this.stepText(m, dest.name);
-      const n2 = r.maneuvers[this.nextRealIndex(mi + 1)];
-      const then = n2 && n2.d - m.d < 60 && !(n2.kind === 'arrive' && r.partial) ? `, then ${this.stepText(n2, dest.name)}` : '';
+      const text = this.stepWithThen(m);
       if (k < 2) {
-        this.speech.say(`In ${fmtDistance(d, u)}, ${text}${then}.`, k === 0 ? 'normal' : 'high');
+        this.speech.say(`In ${fmtDistance(d, u)}, ${this.whichIntersection(m)}${text}.`, k === 0 ? 'normal' : 'high');
       } else if (m.kind !== 'arrive') {
         if (m.kind !== 'roundabout') this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
-        this.speech.say(`${cap(text)}${then}.`, 'high');
+        this.speech.say(`${cap(text)}.`, 'high');
       }
       break;
     }
@@ -1630,8 +1740,15 @@ export class Game {
         );
       case 'l':
         return this.speech.say(this.locationText(), 'high');
-      case 'n':
+      case 'n': {
+        // pressed twice quickly: move there
+        const now = performance.now();
+        const double = now - this.lastNPress < 400 && this.lastNShift === c.shift;
+        this.lastNPress = double ? 0 : now; // a third quick press starts over
+        this.lastNShift = c.shift;
+        if (double) return this.jump(c.shift ? -1 : 1);
         return c.shift ? this.previousIntersection() : this.nextIntersection();
+      }
       case '.':
         return this.stepIntersection(1);
       case ',':
@@ -1722,7 +1839,7 @@ export class Game {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
-        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you, period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
+        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
         'Control D searches for a destination. D says the distance to go, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
         '1 to 4 change vehicle. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
@@ -1820,20 +1937,140 @@ export class Game {
     }
     const key = this.junctionKey(a.node);
     for (const m of this.world!.junction(a.node, this.filter, this.junctionRadius).nodes) this.announcedNodes.set(m.id, this.clock);
+    // bends on the way there come first, with the exact turn; otherwise a rough "road bends left before it"
+    const bends = this.bendsBefore(a);
+    const lead = this.bendsLead(bends);
+    const vague = bends.length ? '' : this.bendText(a.arrival, this.heading);
     if (this.lastN === key) {
-      if (a.deadEnd) return this.speech.say(`${fmtDistance(a.forward, u)}, ${this.junctionLabel(a)}.`, 'high');
+      if (a.deadEnd) return this.speech.say(cap(`${lead}${fmtDistance(a.forward, u)}, ${this.junctionLabel(a)}.`), 'high');
       const branches = this.junctionBranches(a.node, a.arrival, a.arriveName, false) ?? this.junctionLabel(a);
-      return this.speech.say(`${fmtDistance(a.forward, u)}: ${branches}.`, 'high');
+      return this.speech.say(cap(`${lead}${fmtDistance(a.forward, u)}: ${branches}.`), 'high');
     }
     this.lastN = key;
     const rb = a.deadEnd ? null : this.roundaboutAhead(a);
-    if (rb) return this.speech.say(this.roundaboutText(rb, a), 'high');
+    if (rb) return this.speech.say(cap(lead + this.roundaboutText(rb, a)), 'high');
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, a.node.x, a.node.y));
     const where = a.forward < 15 || Math.abs(rel) <= 15 ? 'straight ahead' : `at ${clockDir(rel)}`;
     if (a.deadEnd) {
-      return this.speech.say(`${this.endWord(a)} in ${fmtDistance(a.forward, u)}, ${where}${this.bendText(a.arrival, this.heading)}.`, 'high');
+      const end = this.endWord(a);
+      return this.speech.say(cap(`${lead}${lead && end === 'Dead end' ? 'dead end' : end} in ${fmtDistance(a.forward, u)}, ${where}${vague}.`), 'high');
     }
-    this.speech.say(this.describeAhead(a, `Next intersection in ${fmtDistance(a.forward, u)}, ${where}`, this.heading), 'high');
+    this.speech.say(cap(this.describeAhead(a, `${lead}next intersection in ${fmtDistance(a.forward, u)}, ${where}`, bends.length ? a.arrival : this.heading)), 'high');
+  }
+
+  /**
+   * N twice (Shift+N twice for back): move along the road to the next intersection or bend,
+   * whichever comes first. You land at the intersection facing the way you arrived, or just
+   * before the bend still facing along the road, so you choose the turn (Control + arrow).
+   */
+  private jump(dir: 1 | -1) {
+    const u = this.settings.units;
+    if (this.vehicle.id === 'helicopter') return this.speech.say('Moving by intersection needs a road; not in the helicopter.', 'high');
+    if (this.ring) return this.speech.say('In a roundabout. N gives the next exit.', 'high');
+    const w = this.world!;
+    const back = dir < 0;
+    const s = this.roadStart(20, this.filter, back ? normDeg(this.heading + 180) : this.heading);
+    if (!s) return this.speech.say('Not on a road.', 'high');
+    const name = s.hit.seg.way.name;
+    const skip = this.inJunction;
+    const isStop = (n: GNode) => w.isIntersection(n, this.filter) && !skip?.has(n.id);
+    const line = w.roadLine(s.hit.hit.px, s.hit.hit.py, s.from, s.to, name, this.filter, isStop, 1500);
+    const end = line.pts[line.pts.length - 1];
+
+    // the first bend: not the one we are standing at, nor one that is part of the junction
+    const { span, minTurn } = this.bendParams(0);
+    let bend: { at: number; turn: number; length: number; keys: string[] } | null = null;
+    for (let from = 2, guard = 0; guard < 50; guard++) {
+      const b = findBend(line.pts, minTurn, span, from);
+      if (!b || (line.stopped && end.d - (b.at + b.length) < 12)) break;
+      if (b.keys.some((k) => this.jumpBend.has(k))) {
+        from = b.at + b.length + 1;
+        continue;
+      }
+      bend = b;
+      break;
+    }
+    const street = this.streetName;
+    const moved = (d: number) => `Moved ${back ? 'back ' : ''}${fmtDistance(Math.max(1, d), u)}`;
+    const onto = () => (this.streetName && this.streetName !== street ? `, on ${this.streetName}` : '');
+
+    if (bend) {
+      const p = alongLine(line.pts, Math.max(0, bend.at - 1));
+      this.place(p.x, p.y, back ? normDeg(p.dir + 180) : p.dir, null);
+      this.jumpBend = new Set(bend.keys);
+      for (const k of bend.keys) this.announcedBends.set(k, this.clock);
+      if (back) {
+        // we now stand just past it; driven this way it turns the other way
+        const b = { ...bend, turn: -bend.turn };
+        const kind = Math.abs(b.turn) >= 110 ? 'sharp ' : '';
+        return this.speech.say(`${moved(bend.at)}${onto()}, to just after a ${kind}${b.turn < 0 ? 'left' : 'right'} bend${this.bendDetail(b)}.`, 'high');
+      }
+      const key = bend.turn < 0 ? 'Left' : 'Right';
+      const hint = this.jumpHinted ? '' : ` Control ${key} turns with it.`;
+      this.jumpHinted = true;
+      return this.speech.say(`${moved(bend.at)}${onto()}. ${cap(this.bendWords(bend))} ahead${this.bendDetail(bend)}.${hint}`, 'high');
+    }
+    if (line.stopped) {
+      const node = w.nodesNear(end.x, end.y, 0.5).find((n) => w.isIntersection(n, this.filter));
+      if (node) {
+        const q = alongLine(line.pts, Math.max(0, end.d - 15));
+        const arrival = bearingTo(q.x, q.y, end.x, end.y);
+        const facing = back ? normDeg(arrival + 180) : arrival;
+        const j = w.junction(node, this.filter, this.junctionRadius);
+        this.place(node.x, node.y, facing, j);
+        const a: Ahead = { node, forward: 0, arrival: facing, deadEnd: false, arriveName: name };
+        const rb = this.roundaboutAhead(a);
+        if (rb) return this.speech.say(`${moved(end.d)}, to a roundabout. ${this.roundaboutText(rb, a, '')}`, 'high');
+        const branches = this.junctionBranches(node, facing, name, false) ?? 'no turns';
+        const label = this.junctionLabel(a);
+        return this.speech.say(`${moved(end.d)}, to ${label === 'intersection' ? 'an intersection' : label}${j.signals ? ', traffic signals' : ''}. ${branches}.`, 'high');
+      }
+    }
+    if (line.deadEnd) {
+      if (end.d < 5) return this.speech.say(back ? 'This is the start of the road.' : 'The road ends here.', 'high');
+      const p = alongLine(line.pts, Math.max(0, end.d - 2));
+      this.place(p.x, p.y, back ? normDeg(p.dir + 180) : p.dir, null);
+      return this.speech.say(`${moved(end.d)}${onto()}, to where the road ends.`, 'high');
+    }
+    this.speech.say(`No intersection or bend within ${fmtDistance(1500, u)}${back ? ' behind you' : ''}.`, 'high');
+  }
+
+  /** Put the traveller somewhere new along the roads, stopped, without the cues for getting there. */
+  private place(x: number, y: number, heading: number, j: Junction | null) {
+    this.x = x;
+    this.y = y;
+    this.heading = normDeg(Math.round(heading));
+    this.speed = 0;
+    this.inJunction = j ? new Set(j.nodes.map((n) => n.id)) : null;
+    if (j) for (const n of j.nodes) this.announcedNodes.set(n.id, this.clock);
+    this.ring = null;
+    this.lastN = null;
+    this.stepCursor = null;
+    this.jumpBend = new Set();
+    this.ahead = null;
+    this.wasOffRoad = false;
+    this.updateRoad(true);
+    if (this.route) this.relocateOnRoute();
+  }
+
+  /** After a jump: find our place on the route again, wherever along it that is. */
+  private relocateOnRoute() {
+    const r = this.route!;
+    let best = Infinity;
+    for (let i = 0; i + 1 < r.points.length; i++) {
+      const a = r.points[i];
+      const b = r.points[i + 1];
+      const h = pointSeg(this.x, this.y, a.x, a.y, b.x, b.y);
+      if (h.dist < best) {
+        best = h.dist;
+        this.routeIdx = i;
+        this.routeProg = a.d + h.t * (b.d - a.d);
+      }
+    }
+    this.nextMan = r.maneuvers.findIndex((m) => m.d >= this.routeProg - 3);
+    if (this.nextMan < 0) this.nextMan = r.maneuvers.length;
+    this.spokenSteps.clear();
+    this.offRouteSince = -1;
   }
 
   /** Shift+N: the last intersection behind you, described as you passed through it. */
@@ -2180,6 +2417,13 @@ export class Game {
     } else {
       const hit = w.nearestRoad(this.x, this.y, 25);
       if (hit) options.push({ b: hit.dir, name: hit.seg.way.name }, { b: normDeg(hit.dir + 180), name: hit.seg.way.name });
+      // at a bend: the direction the road takes once round it
+      const s = this.roadStart(25, this.vehicle.canUse);
+      if (s) {
+        const { pts } = w.roadLine(s.hit.hit.px, s.hit.hit.py, s.from, s.to, s.hit.seg.way.name, this.vehicle.canUse, (n) => w.isIntersection(n, this.filter), 80);
+        const bend = findBend(pts, 20, 35);
+        if (bend && bend.at < 10) options.push({ b: alongLine(pts, bend.at + bend.length + 3).dir, name: s.hit.seg.way.name });
+      }
     }
     let best: { b: number; name: string; amt: number } | null = null;
     for (const o of options) {
@@ -2220,6 +2464,11 @@ export class Game {
   toXY(p: LatLon) {
     return this.proj.toXY(p.lat, p.lon);
   }
+}
+
+/** An angle rounded to 5 degrees, for speech. */
+function deg5(a: number): number {
+  return Math.round(Math.abs(a) / 5) * 5;
 }
 
 function cap(s: string): string {

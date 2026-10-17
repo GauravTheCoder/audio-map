@@ -124,7 +124,7 @@ export class AudioEngine {
     const t = this.now;
     this.voice?.update(s, dt);
     const r = s.speed / Math.max(1, s.maxSpeed);
-    this.wind.gain.gain.setTargetAtTime(Math.min(0.25, 0.02 + r * r * 0.25) * (s.speed > 0.3 ? 1 : 0), t, 0.2);
+    this.wind.gain.gain.setTargetAtTime(Math.min(0.08, 0.007 + r * r * 0.08) * (s.speed > 0.3 ? 1 : 0), t, 0.2);
     this.wind.filter.frequency.setTargetAtTime(300 + r * 900, t, 0.2);
     this.reverbSend.gain.setTargetAtTime(s.tunnel ? 0.7 : 0, t, 0.3);
   }
@@ -327,6 +327,32 @@ export class AudioEngine {
     pan.connect(this.master);
     this.tone(784, { dur: 0.12, dest: pan, type: 'triangle', level: 0.22 });
     this.tone(1175, { when: this.now + 0.12, dur: 0.2, dest: pan, type: 'triangle', level: 0.22 });
+  }
+
+  /**
+   * This is the intersection where the route turns: a bright rising major chord from the side to
+   * turn to, then a ping from the road to take.
+   */
+  routeTurnHere(rel: number) {
+    const t = this.now;
+    const dest = this.spatial(Math.max(-90, Math.min(90, rel)), 0.3);
+    [784, 988, 1175, 1568].forEach((f, i) => this.tone(f, { when: t + i * 0.07, dur: 0.35 - i * 0.05, dest, type: 'triangle' }));
+    const ping = this.spatial(rel, 0.32);
+    this.tone(1980, { when: t + 0.45, dur: 0.08, dest: ping, type: 'triangle' });
+  }
+
+  /**
+   * An intersection on the route that you go straight through: a single soft low bell instead of
+   * the two-note one, then the usual pings from each road.
+   */
+  routePassIntersection(exitRels: number[]) {
+    const t = this.now;
+    this.tone(659, { when: t, dur: 0.3, level: 0.07, type: 'sine' });
+    exitRels.forEach((rel, i) => {
+      const dest = this.spatial(rel, 0.18);
+      const f = 1320 + (1 - Math.abs(rel) / 180) * 660;
+      this.tone(f, { when: t + 0.25 + i * 0.12, dur: 0.06, dest, type: 'triangle' });
+    });
   }
 
   /** Road ends ahead: two low falling notes. */

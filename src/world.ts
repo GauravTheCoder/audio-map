@@ -270,6 +270,30 @@ export class World {
     return best;
   }
 
+  /**
+   * The road you are on and facing: of the roads within a few metres of the nearest, the one that
+   * runs closest to your heading. At a junction, that is the road you have turned to face.
+   */
+  roadFacing(x: number, y: number, maxDist: number, heading: number, filter?: (w: Way) => boolean): RoadHit | null {
+    const near = this.nearestRoad(x, y, maxDist, filter);
+    if (!near) return null;
+    let best = near;
+    let bestScore = Infinity;
+    for (const seg of this.segGrid.query(x, y, near.hit.dist + 3)) {
+      if (filter && !filter(seg.way)) continue;
+      const hit = pointSeg(x, y, seg.ax, seg.ay, seg.bx, seg.by);
+      if (hit.dist > near.hit.dist + 3) continue;
+      const dir = bearing(seg.ax, seg.ay, seg.bx, seg.by);
+      const off = Math.abs(relAngle(heading, dir));
+      const score = Math.min(off, 180 - off) + hit.dist * 8;
+      if (score < bestScore) {
+        bestScore = score;
+        best = { seg, hit, dir };
+      }
+    }
+    return best;
+  }
+
   /** Nearest road within maxDist that runs within tol degrees of dir (in either direction along it). */
   nearestRoadAlong(x: number, y: number, maxDist: number, dir: number, tol: number, filter?: (w: Way) => boolean): RoadHit | null {
     let best: RoadHit | null = null;
@@ -385,6 +409,7 @@ export class World {
   /**
    * The line of the road ahead, starting at (x, y) on segment prev→cur, as far as maxDist or the
    * first node where isStop() holds (included). d is the distance along the road from (x, y).
+   * deadEnd: the road ended before either.
    */
   roadLine(
     x: number,
@@ -395,21 +420,21 @@ export class World {
     canUse: (w: Way) => boolean,
     isStop: (n: GNode) => boolean,
     maxDist: number,
-  ): { pts: { x: number; y: number; d: number }[]; stopped: boolean } {
+  ): { pts: { x: number; y: number; d: number }[]; stopped: boolean; deadEnd: boolean } {
     const pts = [{ x, y, d: 0 }];
     let d = 0;
     for (let guard = 0; guard < 2000; guard++) {
       const last = pts[pts.length - 1];
       d += dist(last.x, last.y, cur.x, cur.y);
       pts.push({ x: cur.x, y: cur.y, d });
-      if (isStop(cur)) return { pts, stopped: true };
+      if (isStop(cur)) return { pts, stopped: true, deadEnd: false };
       if (d >= maxDist) break;
       const next = this.continuation(prev, cur, name, canUse);
-      if (!next) break;
+      if (!next) return { pts, stopped: false, deadEnd: true };
       prev = cur;
       cur = next.node;
     }
-    return { pts, stopped: false };
+    return { pts, stopped: false, deadEnd: false };
   }
 
   /** Is this node on a roundabout's ring? */
