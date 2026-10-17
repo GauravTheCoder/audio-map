@@ -80,6 +80,19 @@
           <label><input type="radio" name="soundProfile" value="simple" /> Simple: fewer places and side streets as you go faster (a car hears landmarks and main roads, a walker hears most things)</label>
           <label><input type="radio" name="soundProfile" value="full" /> Full: every place and intersection, with beeps and compass ticks</label>
           <label><input type="radio" name="soundProfile" value="minimal" /> Minimal: landmarks and main roads only</label>
+          <label><input type="radio" name="soundProfile" value="custom" /> Custom: choose below</label>
+          <div class="indent" id="custom-sound">
+            <label class="select">Places while moving
+              <select id="customPlaces">
+                <option value="all">All places</option>
+                <option value="notable">Notable places and up</option>
+                <option value="landmarks">Landmarks only</option>
+                <option value="none">None</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="customSideStreets" /> Announce side-street intersections</label>
+            <label><input type="checkbox" id="customExtras" /> Intersection beeps and compass ticks</label>
+          </div>
         </fieldset>
 
         <fieldset>
@@ -166,7 +179,7 @@
               <tr><td>1 to 4</td><td>Walker, bicycle, car, helicopter</td></tr>
               <tr><td>A</td><td>Toggle road assist (lane keeping: follows bends and goes round roundabouts; you make the turns)</td></tr>
               <tr><td>P</td><td>Toggle place announcements</td></tr>
-              <tr><td>Shift + P</td><td>Switch sound profile: simple, full or minimal</td></tr>
+              <tr><td>Shift + P</td><td>Switch sound profile: full, simple, minimal or custom</td></tr>
               <tr><td>M</td><td>Toggle map rotation</td></tr>
               <tr><td>[ and ]</td><td>Review previous / next spoken messages</td></tr>
               <tr><td>Control</td><td>Stop speech (built-in voice)</td></tr>

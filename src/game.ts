@@ -684,7 +684,7 @@ export class Game {
     this.heading = normDeg(this.heading + deg);
     this.lastManualTurn = this.clock;
     this.turnedDuringHold = true;
-    if (!this.settings.compassTicks || !extrasWanted(this.settings.soundProfile, this.vehicle.id)) return;
+    if (!this.settings.compassTicks || !extrasWanted(this.settings, this.vehicle.id)) return;
     const a = Math.floor(before / 10);
     const b = Math.floor(this.heading / 10);
     if (a !== b) {
@@ -842,7 +842,7 @@ export class Game {
       this.speech.say(`Here: ${this.stepWithThen(turn)}.`, 'high');
       return;
     }
-    if (!ringNode && junctionQuiet(this.settings.soundProfile, this.vehicle.id, j)) return;
+    if (!ringNode && junctionQuiet(this.settings, this.vehicle.id, j)) return;
     if (this.route && this.offRouteSince < 0 && !ringNode) this.audio.routePassIntersection(this.exitAngles(j));
     else this.audio.atIntersection(this.exitAngles(j));
     // the moment to decide: name every road and which way it goes from here
@@ -964,7 +964,7 @@ export class Game {
     }
     const j = this.world!.junction(a.node, this.filter, this.junctionRadius);
     for (const m of j.nodes) this.announcedNodes.set(m.id, this.clock); // one announcement per junction
-    if (junctionQuiet(this.settings.soundProfile, this.vehicle.id, j)) return;
+    if (junctionQuiet(this.settings, this.vehicle.id, j)) return;
     const branches = this.junctionBranches(a.node, a.arrival, a.arriveName, false);
     if (!branches) return;
     this.audio.intersectionChime(j.exits.length, j.signals);
@@ -1337,7 +1337,7 @@ export class Game {
     // faster vehicles pass places quicker, so leave longer between cues
     if (this.clock - this.lastPlaceSpoken < 1.2 + Math.min(2.8, this.speed / 6)) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
-      if (!placeWanted(this.settings.soundProfile, this.vehicle.id, place)) continue;
+      if (!placeWanted(this.settings, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
       if (this.clock - last < 180) continue;
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
@@ -2423,7 +2423,7 @@ export class Game {
   /** Parking-sensor style beeps that quicken as the next intersection approaches. */
   private updateProximityBeeps() {
     const a = this.ahead;
-    if (!this.settings.proximityBeeps || !extrasWanted(this.settings.soundProfile, this.vehicle.id) || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
+    if (!this.settings.proximityBeeps || !extrasWanted(this.settings, this.vehicle.id) || !a || a.mapEdge || this.inJunction || this.ring || this.speed < 0.3 || this.vehicle.id === 'helicopter') return;
     const base = this.vehicle.id === 'walker' ? 25 : this.vehicle.id === 'bicycle' ? 35 : 40;
     const range = Math.min(120, Math.max(base, this.speed * 3));
     const d = a.forward - this.speed * (this.clock - this.aheadAt); // ahead is refreshed every 0.1 s

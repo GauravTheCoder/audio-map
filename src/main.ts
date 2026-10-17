@@ -70,6 +70,14 @@ function bindSettings() {
     el.value = String(settings[id]);
     el.addEventListener('input', () => update({ [id]: parseFloat(el.value) }));
   }
+  const places = $<HTMLSelectElement>('customPlaces');
+  const side = $<HTMLInputElement>('customSideStreets');
+  const extras = $<HTMLInputElement>('customExtras');
+  places.value = settings.customSound.places;
+  side.checked = settings.customSound.sideStreets;
+  extras.checked = settings.customSound.extras;
+  const custom = () => update({ customSound: { places: places.value as Settings['customSound']['places'], sideStreets: side.checked, extras: extras.checked } });
+  for (const el of [places, side, extras]) el.addEventListener('change', custom);
   const units = $<HTMLSelectElement>('units');
   units.value = settings.units;
   units.addEventListener('change', () => update({ units: units.value as Settings['units'] }));

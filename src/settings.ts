@@ -1,4 +1,4 @@
-import type { SoundProfile } from './profiles';
+import type { CustomSound, SoundProfile } from './profiles';
 
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
@@ -26,6 +26,7 @@ export interface Settings {
   display: DisplayMode;
   walkRoute: WalkRoute;
   soundProfile: SoundProfile;
+  customSound: CustomSound;
   volume: number;
 }
 
@@ -47,6 +48,7 @@ const DEFAULTS: Settings = {
   display: 'highContrast',
   walkRoute: 'shortest',
   soundProfile: 'simple',
+  customSound: { places: 'notable', sideStreets: true, extras: true },
   volume: 0.8,
 };
 
