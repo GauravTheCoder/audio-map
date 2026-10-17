@@ -7,7 +7,7 @@ import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type 
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
-import { LiveGps, easeAngle, pickHeading, type GpsFix } from './gps';
+import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
 import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
@@ -145,6 +145,8 @@ export class Game {
   /** live GPS mode: once a fix has arrived, the device, not the keyboard, moves the traveller */
   private live: LiveGps | null = null;
   private liveFix: GpsFix | null = null;
+  private gpsEst: Estimate | null = null;
+  private gpsPoor = false;
   private restartingForGps = false;
   private throttle = 0;
   private vehicle: VehicleProfile;
@@ -652,8 +654,16 @@ export class Game {
   /** Follow the device's real position, speed and heading instead of the keyboard. */
   private followGps(dt: number) {
     const f = this.liveFix;
-    if (!f) return;
-    const t = this.proj.toXY(f.lat, f.lon);
+    const e = this.gpsEst;
+    if (!f || !e) return;
+    const t = { x: e.x, y: e.y };
+    // a walker's fix is likely on a street: pull it onto the nearest one when the fix is good enough
+    const r = this.vehicle.id === 'helicopter' ? 0 : snapRadius(e.acc);
+    const hit = r ? this.world?.nearestRoad(e.x, e.y, r, this.filter) : null;
+    if (hit) {
+      t.x = hit.hit.px;
+      t.y = hit.hit.py;
+    }
     const k = Math.min(1, dt * 3);
     const ox = this.x;
     const oy = this.y;
@@ -2337,6 +2347,8 @@ export class Game {
     this.live?.stop();
     this.live = null;
     this.liveFix = null;
+    this.gpsEst = null;
+    this.gpsPoor = false;
     this.speed = 0;
   }
 
@@ -2366,7 +2378,16 @@ export class Game {
   private async onGpsFix(live: LiveGps, f: GpsFix) {
     if (this.live !== live) return;
     const first = !this.liveFix;
+    const acc = f.accuracy ?? DEFAULT_ACCURACY;
+    const poor = acc > POOR_ACCURACY;
+    if (poor !== this.gpsPoor) {
+      this.gpsPoor = poor;
+      this.speech.say(poor ? `GPS accuracy is poor, about ${fmtDistance(acc, this.settings.units)}.${first ? '' : ' Ignoring weak fixes.'}` : 'GPS accuracy is good again.', 'normal');
+    }
+    if (poor && !first) return;
     this.liveFix = f;
+    const p0 = this.proj.toXY(f.lat, f.lon);
+    this.gpsEst = fuse(this.gpsEst, p0.x, p0.y, acc, performance.now() / 1000, f.speed);
     if (!first) return;
     const p = this.proj.toXY(f.lat, f.lon);
     if (Math.hypot(p.x, p.y) > 20_000) {
@@ -2380,6 +2401,7 @@ export class Game {
     }
     if (this.live !== live) return;
     const q = this.proj.toXY(f.lat, f.lon);
+    this.gpsEst = { x: q.x, y: q.y, acc, t: performance.now() / 1000 };
     this.x = q.x;
     this.y = q.y;
     this.speech.say('Location found.', 'normal');

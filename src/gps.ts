@@ -9,7 +9,24 @@ export interface GpsFix {
   speed: number;
   /** direction of travel in degrees, when the device reports one */
   heading: number | null;
+  /** radius in metres within which the position is 68% likely to lie, when reported */
+  accuracy: number | null;
 }
+
+/** Filtered position in local metres, with its estimated accuracy and the time (s) of the last fix. */
+export interface Estimate {
+  x: number;
+  y: number;
+  acc: number;
+  t: number;
+}
+
+/** Fixes worse than this are ignored once a good one has arrived. */
+export const POOR_ACCURACY = 100;
+/** Snapping to the nearest road is only trusted when the fix is at least this good (metres). */
+const SNAP_MAX = 30;
+/** Accuracy assumed when the device reports none. */
+export const DEFAULT_ACCURACY = 15;
 
 export type GpsProblem = 'denied' | 'nosignal' | 'unsupported';
 
@@ -33,6 +50,23 @@ export function compassHeading(e: OrientationLike): number | null {
 export function pickHeading(compass: number | null, course: number | null, speed: number): number | null {
   if (compass !== null) return compass;
   return course !== null && speed >= MIN_COURSE_SPEED ? normDeg(course) : null;
+}
+
+/**
+ * Blend a new fix into the estimate, weighting each by its accuracy: a poor fix moves us little, a good one a lot.
+ * The estimate's own uncertainty grows with the time since the last fix and the speed we may have covered.
+ */
+export function fuse(prev: Estimate | null, x: number, y: number, acc: number, t: number, speed: number): Estimate {
+  if (!prev) return { x, y, acc, t };
+  const reach = Math.max(speed, 1) * Math.max(0, t - prev.t);
+  const pv = prev.acc ** 2 + reach ** 2;
+  const k = pv / (pv + acc ** 2);
+  return { x: prev.x + (x - prev.x) * k, y: prev.y + (y - prev.y) * k, acc: Math.sqrt((1 - k) * pv), t };
+}
+
+/** Search radius for snapping to a road, or 0 when the position is too uncertain to snap. */
+export function snapRadius(acc: number): number {
+  return acc <= SNAP_MAX ? Math.max(acc, 10) : 0;
 }
 
 /** Move angle `from` a fraction k of the way to `to`, the short way round north. */
@@ -76,7 +110,7 @@ export class LiveGps {
           this.onRecovered();
         }
         const c = p.coords;
-        this.onFix({ lat: c.latitude, lon: c.longitude, speed: c.speed ?? 0, heading: c.heading ?? null });
+        this.onFix({ lat: c.latitude, lon: c.longitude, speed: c.speed ?? 0, heading: c.heading ?? null, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null });
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) return this.onProblem('denied');
