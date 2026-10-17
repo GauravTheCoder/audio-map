@@ -78,9 +78,13 @@
         <fieldset>
           <legend>Sound profile (Shift + P to switch)</legend>
           <label><input type="radio" name="soundProfile" value="simple" /> Simple: fewer places and side streets as you go faster (a car hears landmarks and main roads, a walker hears most things)</label>
+          <button type="button" class="preview" data-profile="simple">Preview</button>
           <label><input type="radio" name="soundProfile" value="full" /> Full: every place and intersection, with beeps and compass ticks</label>
+          <button type="button" class="preview" data-profile="full">Preview</button>
           <label><input type="radio" name="soundProfile" value="minimal" /> Minimal: landmarks and main roads only</label>
+          <button type="button" class="preview" data-profile="minimal">Preview</button>
           <label><input type="radio" name="soundProfile" value="custom" /> Custom: choose below</label>
+          <button type="button" class="preview" data-profile="custom">Preview</button>
           <div class="indent" id="custom-sound">
             <label class="select">Places while moving
               <select id="customPlaces">

@@ -6,6 +6,7 @@ import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
+import { initPreview } from './preview';
 import { Speech } from './speech';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -427,6 +428,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 bindSettings();
+initPreview(() => settings, speech);
 select(selected);
 openMenu('main');
 
