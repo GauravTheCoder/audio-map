@@ -207,6 +207,7 @@ export class Game {
   onHud?: (h: Hud) => void;
   onMenu?: (focus: 'main' | 'search' | 'settings') => void;
   onNavigate?: () => void;
+  onJump?: () => void;
 
   constructor(
     private settings: Settings,
@@ -1888,6 +1889,9 @@ export class Game {
       case 'f':
         this.onMenu?.('search');
         return;
+      case 'j':
+        if (c.ctrl) this.onJump?.();
+        return;
       case 'd':
         if (!c.ctrl) return this.distanceToGo();
         this.onNavigate?.();
@@ -1945,7 +1949,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control D searches for a destination. D says the distance to go, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, G destination info, Backspace clears it. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2387,6 +2391,17 @@ export class Game {
     this.speech.say(`Destination ${t.name}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}.${guided ? '' : ' Follow the beacon.'}`, 'high');
     if (guided) void this.computeRoute(true);
     else this.clearRoute();
+  }
+
+  /**
+   * Control + J: move to a place and load the map there, keeping the destination (re-planning the
+   * route from the new spot), so a route from A to B can be learnt by jumping to A.
+   */
+  async jumpTo(name: string, lat: number, lon: number) {
+    const d = this.dest;
+    const keep = d ? { name: d.name, radius: d.radius ?? 0, ...this.proj.toLatLon(d.x, d.y) } : null;
+    await this.start({ lat, lon }, name);
+    if (keep && this.world) this.setTargetLatLon(keep.name, keep.lat, keep.lon, keep.radius);
   }
 
   /** Set a beacon destination from a search result (any distance, even outside the loaded map). */

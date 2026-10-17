@@ -77,14 +77,18 @@ function syncVehicleRadios() {
 
 // ---------- location selection ----------
 
-function select(p: Selected) {
+function select(p: Selected, announce = true) {
   selected = p;
   try {
     localStorage.setItem(PLACE_KEY, JSON.stringify(p));
   } catch {
     // ignore
   }
-  $('selected-place').textContent = `Selected: ${p.name}`;
+  // the line is a live region for choosing in the menu; a jump says where you are anyway
+  const line = $('selected-place');
+  if (!announce) line.removeAttribute('aria-live');
+  line.textContent = `Selected: ${p.name}`;
+  if (!announce) setTimeout(() => line.setAttribute('aria-live', 'polite'), 0);
   startBtn.textContent = game ? 'Go there' : 'Start';
 }
 
@@ -202,7 +206,8 @@ startBtn.addEventListener('click', () => {
     const audio = new AudioEngine(settings.volume); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
     game.onMenu = openMenu;
-    game.onNavigate = openNav;
+    game.onNavigate = () => openNav('navigate');
+    game.onJump = () => openNav('jump');
     game.onHud = (h) => {
       $('hud-street').textContent = h.street || '—';
       $('hud-speed').textContent = h.speed;
@@ -230,9 +235,18 @@ menu.addEventListener('cancel', (e) => {
 // ---------- destination search (beacon) ----------
 
 const nav = $<HTMLDialogElement>('nav');
+/** the same search serves Control + D (set a destination) and Control + J (jump there) */
+let navMode: 'navigate' | 'jump' = 'navigate';
 
-function openNav() {
+function openNav(mode: 'navigate' | 'jump') {
   if (!game) return;
+  navMode = mode;
+  const jump = mode === 'jump';
+  $('nav-title').textContent = jump ? 'Jump to' : 'Navigate to';
+  $('nav-hint').textContent = jump
+    ? 'Search for a place, address or area to move there. Any destination you have set is kept. Escape to cancel.'
+    : 'Search for a place, address or area. Turn-by-turn directions and a beacon will guide you there. Escape to cancel.';
+  $('nav-label').textContent = jump ? 'Where do you want to jump to?' : 'Where do you want to go?';
   game.pause();
   $('nav-status').textContent = '';
   $<HTMLUListElement>('nav-results').replaceChildren();
@@ -252,7 +266,10 @@ function closeNav() {
 
 function pickDestination(name: string, lat: number, lon: number, radius: number) {
   closeNav();
-  game?.setTargetLatLon(name, lat, lon, radius);
+  if (navMode === 'jump') {
+    select({ name, lat, lon }, false); // also where the next visit starts
+    void game?.jumpTo(name, lat, lon);
+  } else game?.setTargetLatLon(name, lat, lon, radius);
 }
 
 async function runNavSearch() {
@@ -283,7 +300,7 @@ async function runNavSearch() {
     // keep any nearby matches
   }
   const n = list.children.length;
-  status.textContent = n ? `${n} results. Choose one to navigate there.` : 'No results found.';
+  status.textContent = n ? `${n} results. Choose one to ${navMode === 'jump' ? 'jump' : 'navigate'} there.` : 'No results found.';
   (list.querySelector('button') as HTMLButtonElement | null)?.focus();
 }
 
