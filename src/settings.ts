@@ -1,3 +1,5 @@
+import type { PlaceGroup } from './world';
+
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
 export type VehicleId = 'walker' | 'bicycle' | 'car' | 'helicopter';
@@ -23,6 +25,8 @@ export interface Settings {
   display: DisplayMode;
   walkRoute: WalkRoute;
   volume: number;
+  /** place groups silenced while moving; on-demand lookups ignore this */
+  mutedGroups: PlaceGroup[];
 }
 
 const DEFAULTS: Settings = {
@@ -42,6 +46,7 @@ const DEFAULTS: Settings = {
   display: 'highContrast',
   walkRoute: 'shortest',
   volume: 0.8,
+  mutedGroups: [],
 };
 
 const KEY = 'audio-map-settings';
@@ -53,12 +58,18 @@ export function loadSettings(): Settings {
       const s = { ...DEFAULTS, ...JSON.parse(raw) } as Settings;
       // earlier names: 'default' (never chosen, just the old default) and 'lowVision'
       if (s.display !== 'standard') s.display = 'highContrast';
+      if (!Array.isArray(s.mutedGroups)) s.mutedGroups = [];
       return s;
     }
   } catch {
     // storage unavailable: fall through to defaults
   }
-  return { ...DEFAULTS };
+  return { ...DEFAULTS, mutedGroups: [] };
+}
+
+/** ambient place announcements and cues only */
+export function placeWanted(s: Settings, group: PlaceGroup): boolean {
+  return !s.mutedGroups.includes(group);
 }
 
 export function saveSettings(s: Settings): void {

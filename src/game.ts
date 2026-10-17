@@ -6,7 +6,7 @@ import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
-import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
+import { fmtDistance, fmtSpeed, fmtSpeedShort, placeWanted, saveSettings, type Settings, type VehicleId } from './settings';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
@@ -1293,7 +1293,7 @@ export class Game {
     if (this.clock - this.lastPlaceSpoken < 1.2) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
-      if (this.clock - last < 180) continue;
+      if (this.clock - last < 180 || !placeWanted(this.settings, place.group)) continue;
       const rel = relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y));
       if (Math.abs(rel) > 120 && d > 10) continue; // already passed it
       this.announcedPlaces.set(place.id, this.clock);

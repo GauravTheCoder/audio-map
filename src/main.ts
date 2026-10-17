@@ -5,6 +5,7 @@ import type { LatLon } from './geo';
 import { MapView } from './mapview';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
+import type { PlaceGroup } from './world';
 import { Speech } from './speech';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -44,6 +45,13 @@ function bindSettings() {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
+  }
+  for (const el of document.querySelectorAll<HTMLInputElement>('input[data-group]')) {
+    const group = el.dataset.group as PlaceGroup;
+    el.checked = !settings.mutedGroups.includes(group);
+    el.addEventListener('change', () =>
+      update({ mutedGroups: el.checked ? settings.mutedGroups.filter((g) => g !== group) : [...settings.mutedGroups, group] }),
+    );
   }
   for (const id of ['voiceRate', 'volume'] as const) {
     const el = $<HTMLInputElement>(id);
