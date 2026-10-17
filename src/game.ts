@@ -1953,6 +1953,8 @@ export class Game {
         return this.clearDestination();
       case 'c':
         return this.cycleFilter();
+      case 'o':
+        return this.routePreview();
       case 'x':
         return this.nearestTransit();
       case 'y':
@@ -2031,7 +2033,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Space sonar sweep. ' +
-        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
+        'Control J jumps to a place. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2565,10 +2567,28 @@ export class Game {
     if (!r || r.partial) return this.speech.say(`${this.dest.name}: ${straight}.`, 'high');
     const left = Math.max(0, r.length - this.routeProg);
     // time at the current speed, or a typical speed for the vehicle when stopped
+    this.speech.say(`${fmtDistance(left, u)} to go along the route, about ${this.etaText(left)}. ${straight}.`, 'high');
+  }
+
+  /** Time for a distance at the current speed, or a typical speed for the vehicle when stopped. */
+  private etaText(left: number): string {
     const typical = { walker: 1.3, bicycle: 4.5, car: 9, helicopter: 50 }[this.vehicle.id];
     const minutes = Math.max(1, Math.round(left / (this.speed > 0.5 ? this.speed : typical) / 60));
-    const time = minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
-    this.speech.say(`${fmtDistance(left, u)} to go along the route, about ${time}. ${straight}.`, 'high');
+    return minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+  }
+
+  /** O: the whole route in one go: length, time and the first few turns with the street each leads onto. */
+  private routePreview() {
+    const r = this.route;
+    if (!this.dest || !r) return this.instructions();
+    const u = this.settings.units;
+    const steps = r.maneuvers.slice(this.nextMan).filter((m) => m.kind !== 'arrive' && !this.isTrivial(m));
+    const left = Math.max(0, r.length - this.routeProg);
+    const shown = steps.slice(0, 8);
+    const list = shown.map((m, i) => `${i + 1}, ${this.stepText(m, this.dest!.name)} after ${fmtDistance(Math.max(0, m.d - (i ? shown[i - 1].d : this.routeProg)), u)}`);
+    const more = steps.length > shown.length ? ` ${steps.length - shown.length} more turns after that.` : '';
+    const head = `Route to ${this.dest.name}: ${fmtDistance(left, u)}${r.partial ? ' so far' : ''}, about ${this.etaText(left)}, ${steps.length} turn${steps.length === 1 ? '' : 's'}.`;
+    this.speech.say(`${head} ${list.length ? list.join('. ') + '.' : 'Straight on.'}${more}`, 'high');
   }
 
   private destinationInfo() {
