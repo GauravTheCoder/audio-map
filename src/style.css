@@ -381,3 +381,13 @@ dialog#nav label {
 .indent {
   margin-left: 1.5rem;
 }
+
+#palette-list li {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+#palette-list li[aria-selected='true'] {
+  outline: 3px solid currentColor;
+}

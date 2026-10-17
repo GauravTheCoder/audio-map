@@ -13,6 +13,7 @@ import { Speech } from './speech';
 import { Tutorial } from './tutorial';
 import { bindRoutes } from './routesui';
 import { initManage } from './manage';
+import { setupPalette } from './palette';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -455,6 +456,30 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key === ',' && document.activeElement !== stage) {
     e.preventDefault();
     openMenu('settings');
+  }
+});
+
+// F2 works everywhere: key events from the explorer bubble up to the document too
+const openPalette = setupPalette(
+  () => {
+    if (!game) {
+      speech.say('Start the explorer first.', 'high');
+      return false;
+    }
+    if (document.querySelector('dialog[open]')) return false;
+    game.pause();
+    return true;
+  },
+  () => {
+    game?.resume();
+    game?.focus(stage);
+  },
+  (x) => game?.run(x.key, x),
+);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F2') {
+    e.preventDefault();
+    openPalette();
   }
 });
 
