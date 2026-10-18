@@ -73,7 +73,10 @@ export function bindRoutes(game: Game, stage: HTMLElement) {
     name.focus();
     save = () => {
       const n = name.value.trim();
-      if (!n) return;
+      if (!n) {
+        status.textContent = 'Give the route a name.';
+        return;
+      }
       saveRoute({ name: n, start: trip.start, dest: trip.dest });
       close();
       game.announce(`Route ${n} saved.`);
