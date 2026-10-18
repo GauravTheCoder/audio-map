@@ -155,20 +155,24 @@ function loadPlace(): Selected | null {
   }
 }
 
+let searchSeq = 0;
 async function runSearch() {
   const q = $<HTMLInputElement>('search').value.trim();
   const status = $('search-status');
   const list = $<HTMLUListElement>('results');
   if (!q) return;
+  const seq = ++searchSeq;
   status.textContent = 'Searching…';
   list.replaceChildren();
   let results: GeocodeResult[] = [];
   try {
     results = await geocode(q);
   } catch {
+    if (seq !== searchSeq) return;
     status.textContent = 'Search failed. Check your connection and try again.';
     return;
   }
+  if (seq !== searchSeq) return;
   if (!results.length) {
     status.textContent = 'No results found.';
     return;
@@ -377,8 +381,10 @@ function showFavorites() {
   }
 }
 
+let navSeq = 0;
 async function runNavSearch() {
   if (!game) return;
+  const seq = ++navSeq;
   const q = $<HTMLInputElement>('nav-q').value.trim();
   if (!q) return showFavorites();
   const status = $('nav-status');
@@ -397,13 +403,16 @@ async function runNavSearch() {
   for (const m of game.findPlaces(q)) add(`${m.name}, ${m.detail}`, () => pickDestination(m.name, m.lat, m.lon, 0));
   status.textContent = 'Searching…';
   try {
-    for (const r of await geocode(q, game.position ?? undefined)) {
+    const found = await geocode(q, game.position ?? undefined);
+    if (seq !== navSeq) return;
+    for (const r of found) {
       const name = shortName(r.name);
       add(`${name}, ${game.describeFromHere(r.lat, r.lon)}`, () => pickDestination(name, r.lat, r.lon, r.radius));
     }
   } catch {
     // keep any nearby matches
   }
+  if (seq !== navSeq) return;
   const n = list.children.length;
   status.textContent = n ? `${n} results. Choose one to ${navMode === 'jump' ? 'jump' : 'navigate'} there.` : 'No results found.';
   (list.querySelector('button') as HTMLButtonElement | null)?.focus();
