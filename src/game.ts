@@ -1621,6 +1621,7 @@ export class Game {
 
   private dropCorridor() {
     this.routeReq++;
+    this.routePending = false; // the request it belonged to is now superseded, and its finally will not clear it
     this.corridorAbort?.abort();
     this.corridorAbort = null;
     this.corridorLoading = false;
