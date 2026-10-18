@@ -16,6 +16,7 @@ import { initManage } from './manage';
 import { REBIND_NAME, setupPalette } from './palette';
 import { setupRebind } from './rebind';
 import { setupTouch } from './touch';
+import { setupVoice } from './voice';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -501,6 +502,20 @@ document.addEventListener('keydown', (e) => {
 });
 
 setupTouch(stage, () => game);
+
+const voiceBtn = $<HTMLButtonElement>('voice-btn');
+const toggleVoice = setupVoice(() => game, (s) => speech.say(s, 'high'));
+if (toggleVoice) {
+  voiceBtn.addEventListener('click', () => voiceBtn.setAttribute('aria-pressed', String(toggleVoice())));
+} else {
+  voiceBtn.hidden = true;
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'F4') return;
+  e.preventDefault();
+  if (toggleVoice) voiceBtn.setAttribute('aria-pressed', String(toggleVoice()));
+  else speech.say('Voice commands are not supported in this browser.', 'high');
+});
 
 bindSettings();
 initPreview(() => settings, speech);
