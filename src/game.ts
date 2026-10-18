@@ -1507,7 +1507,8 @@ export class Game {
       this.clearRoute();
       return;
     }
-    const r = this.route;
+    // grid steps do not follow the route, so in grid mode the beacon points straight at the destination
+    const r = this.grid ? null : this.route;
     const remaining = r && !r.partial ? r.length - this.routeProg : d;
     if (this.settings.beaconSound && this.clock >= this.nextBeacon) {
       const closeness = Math.max(0, 1 - remaining / 500);
@@ -1515,6 +1516,7 @@ export class Game {
       // with a route, aim a little way along it so following the beacon follows the streets
       const look = this.vehicle.id === 'walker' ? 15 : Math.max(25, this.speed * 2);
       const aim = r ? pointAlong(r, this.routeProg + look) : this.dest;
+      // grid mode always faces north, so this is a compass bearing: high for north, right for east
       this.audio.beacon(relAngle(this.heading, bearingTo(this.x, this.y, aim.x, aim.y)), closeness);
     }
     // progress updates at distance milestones
@@ -2880,7 +2882,8 @@ export class Game {
       return this.speech.say(`Grid mode off. Facing ${compass8(this.heading)}.`, 'high');
     }
     if (this.live) return this.speech.say('Live GPS is on. Shift L turns it off first.', 'high');
-    this.place(this.x, this.y, this.heading, null);
+    // face north and stay so: the beacon and clock directions then read as a north-up map
+    this.place(this.x, this.y, 0, null);
     this.grid = { key: null, req: 0 };
     void this.gridLook(true, `Grid mode, up is north. Arrows move ${this.gridStepText()}; minus and equals change the step. Space says where you are. F3 leaves.`);
   }
@@ -2908,8 +2911,8 @@ export class Game {
 
   private gridMove(dx: number, dy: number) {
     const m = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
-    this.place(this.x + dx * m, this.y + dy * m, bearingTo(0, 0, dx, dy), null);
-    void this.gridLook(false);
+    this.place(this.x + dx * m, this.y + dy * m, 0, null);
+    void this.gridLook(true);
   }
 
   private gridResize(dir: 1 | -1) {
@@ -2938,7 +2941,7 @@ export class Game {
     return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
   }
 
-  /** Play the sound for the ground here; say what it is when it is new, or always if asked. */
+  /** Play the sound for the ground here and say what it is: always when asked, otherwise only when it is new. */
   private async gridLook(always: boolean, prefix = '', suffix = '') {
     const g = this.grid;
     if (!g) return;

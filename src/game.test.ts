@@ -567,7 +567,7 @@ describe('grid mode', () => {
     expect(g.speed).toBe(0);
   });
 
-  it('speaks an area only on entering it; Space repeats it', async () => {
+  it('speaks where you are on every step, even in the same area; Space repeats it', async () => {
     const { game, said, g } = gridSetup();
     game.run('F3');
     await flush();
@@ -575,13 +575,31 @@ describe('grid mode', () => {
     await flush();
     expect(said.at(-1)).toBe('Oak Park.');
     const n = said.length;
-    game.run('ArrowRight');
+    game.run('ArrowRight'); // still in the park
     await flush();
-    expect(said.length).toBe(n);
+    expect(said.length).toBe(n + 1);
+    expect(said.at(-1)).toBe('Oak Park.');
     game.run(' ');
     await flush();
     expect(said.at(-1)).toBe('Oak Park.');
     expect(g.grid.key).toBe('park1');
+  });
+
+  it('keeps facing north, so the beacon is a compass: east of you stays on the right', () => {
+    const { game, g } = gridSetup();
+    const rels: number[] = [];
+    g.audio = new Proxy({}, { get: (_t, p) => (p === 'beacon' ? (rel: number) => rels.push(rel) : p === 'now' ? 0 : () => {}) });
+    game.setTarget({ name: 'East Point', x: 300, y: 50 });
+    game.run('F3');
+    for (const key of ['ArrowDown', 'ArrowLeft', 'ArrowUp']) {
+      game.run(key);
+      expect(g.heading).toBe(0);
+      g.nextBeacon = 0;
+      g.updateDestination();
+    }
+    // from (−10, 50) the destination is due east of the last step
+    expect(rels.at(-1)).toBeCloseTo(90, 0);
+    expect(rels.every((r) => r > 60 && r < 120)).toBe(true);
   });
 
   it('minus and equals change the step between 1 and 1000', () => {
