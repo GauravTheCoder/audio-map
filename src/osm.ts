@@ -66,8 +66,10 @@ export const HIGHWAYS =
 function bbox(c: LatLon, r: number): string {
   const lat = Math.round(c.lat / 0.002) * 0.002;
   const lon = Math.round(c.lon / 0.002) * 0.002;
-  const dLat = r / 110_540;
-  const dLon = r / (111_320 * Math.cos((lat * Math.PI) / 180));
+  // snapping moves the centre by up to half a step (~111 m), so widen by that to still cover the requested radius
+  const reach = r + 111;
+  const dLat = reach / 110_540;
+  const dLon = reach / (111_320 * Math.cos((lat * Math.PI) / 180));
   // Overpass cannot take a box across the dateline or past a pole, so clip to the map
   return [Math.max(-90, lat - dLat), Math.max(-180, lon - dLon), Math.min(90, lat + dLat), Math.min(180, lon + dLon)].map((v) => v.toFixed(5)).join(',');
 }
