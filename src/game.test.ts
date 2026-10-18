@@ -274,6 +274,32 @@ describe('notes', () => {
   });
 });
 
+describe('E where am I', () => {
+  it('speaks the full text with the area once the lookup returns', async () => {
+    const { game, said } = setup();
+    game.run('e');
+    await vi.waitFor(() => expect(said.length).toBe(1));
+    expect(said[0]).toContain('Testville');
+    expect(said[0]).toContain('Nearest landmark: Blue Cafe');
+  });
+
+  it('still speaks the full text after 2.5 s when the lookup hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(reverseGeocode).mockReturnValue(new Promise(() => {}));
+      const { game, said } = setup();
+      game.run('e');
+      await vi.advanceTimersByTimeAsync(2499);
+      expect(said).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(said.length).toBe(1);
+      expect(said[0]).toContain('Nearest landmark: Blue Cafe');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('position helpers', () => {
   it('position and toXY round-trip', () => {
     const { game, g } = setup();
