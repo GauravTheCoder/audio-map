@@ -15,6 +15,7 @@ import { bindRoutes } from './routesui';
 import { initManage } from './manage';
 import { REBIND_NAME, setupPalette } from './palette';
 import { setupRebind } from './rebind';
+import { setupTouch } from './touch';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -498,6 +499,8 @@ document.addEventListener('keydown', (e) => {
     openPalette();
   }
 });
+
+setupTouch(stage, () => game);
 
 bindSettings();
 initPreview(() => settings, speech);

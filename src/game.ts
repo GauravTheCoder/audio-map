@@ -507,6 +507,10 @@ export class Game {
     this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
   }
 
+  hold(code: string, on: boolean) {
+    this.input.setHeld(code, on);
+  }
+
   pause() {
     this.paused = true;
     this.calibrationTimers.forEach(clearTimeout);

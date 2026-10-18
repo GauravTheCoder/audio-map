@@ -57,6 +57,12 @@ export class Input {
     this.target = null;
   }
 
+  /** Holds or releases a key without a keyboard event (touch and voice). */
+  setHeld(code: string, on: boolean) {
+    if (on) this.held.add(code);
+    else this.held.delete(code);
+  }
+
   isDown(code: string): boolean {
     return this.held.has(code);
   }
