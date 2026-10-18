@@ -59,3 +59,13 @@ describe('loadSettings', () => {
     expect(loadSettings().mutedGroups).toEqual([]);
   });
 });
+
+describe('loadSettings with corrupt storage', () => {
+  it('falls back to defaults for wrongly typed values', () => {
+    vi.stubGlobal('localStorage', { getItem: () => '{"customSound":null,"soundProfile":"bogus","vehicle":"boat","volume":"x","units":"furlongs"}' });
+    const s = loadSettings();
+    vi.unstubAllGlobals();
+    expect(s.customSound).toEqual({ places: 'notable', sideStreets: true, extras: true });
+    expect([s.soundProfile, s.vehicle, s.volume, s.units]).toEqual(['simple', 'walker', 0.8, 'metric']);
+  });
+});
