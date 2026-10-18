@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game } from './game';
+import { Game, minutesText } from './game';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
 import { World, type Place } from './world';
@@ -660,5 +660,11 @@ describe('stops, entrances and crossings', () => {
     g.speed = 1;
     g.checkHazards();
     expect(said.at(-1)).toBe('Crossing with signals ahead, 20 metres, over Oak Street, south of Elm Street. Audible signal, push button');
+  });
+});
+
+describe('minutesText', () => {
+  it('pluralises hours and minutes and drops zero minutes', () => {
+    expect([1, 59, 60, 61, 120, 121, 181].map(minutesText)).toEqual(['1 minute', '59 minutes', '1 hour', '1 hour 1 minute', '2 hours', '2 hours 1 minute', '3 hours 1 minute']);
   });
 });

@@ -26,8 +26,11 @@ import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place
 
 const STEP = 1 / 60;
 /** distances (m) at which progress toward the destination is spoken */
-function minutesText(minutes: number): string {
-  return minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+export function minutesText(minutes: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+  const h = Math.floor(minutes / 60);
+  if (!h) return plural(minutes, 'minute');
+  return minutes % 60 ? `${plural(h, 'hour')} ${plural(minutes % 60, 'minute')}` : plural(h, 'hour');
 }
 
 const FILTER_NAMES: Record<PlaceGroup, string> = {
