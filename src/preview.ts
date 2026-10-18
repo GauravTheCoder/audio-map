@@ -32,7 +32,7 @@ function stop(speech: Speech) {
 function play(btn: HTMLButtonElement, profile: SoundProfile, settings: Settings, speech: Speech) {
   const s = { ...settings, soundProfile: profile };
   const v = settings.vehicle;
-  const a = (audio = new AudioEngine(settings.volume)); // created on the click so the browser allows sound
+  const a = (audio = new AudioEngine(settings.volume, settings.soundTheme)); // created on the click so the browser allows sound
   activeBtn = btn;
   btn.textContent = 'Stop';
   const at = (ms: number, f: () => void) => timers.push(window.setTimeout(f, ms));

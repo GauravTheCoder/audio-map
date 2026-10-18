@@ -53,6 +53,7 @@ export const ACTIONS: Action[] = [
   a('Car', '3', '3'),
   a('Helicopter', '4', '4'),
   a('Toggle road assist', 'A', 'a'),
+  a('Switch sound theme', 'Shift A', 'A', true),
   a('Toggle place announcements', 'P', 'p'),
   a('Switch sound profile', 'Shift P', 'P', true),
   a('Toggle map rotation', 'M', 'm'),

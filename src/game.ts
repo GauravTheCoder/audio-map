@@ -11,6 +11,7 @@ import { addFavorite } from './favorites';
 import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
+import { nextTheme, THEME_TEXT } from './audio/themes';
 import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
@@ -529,6 +530,7 @@ export class Game {
     this.settings = s;
     this.speech.configure(s.speechMode, s.voiceRate);
     this.audio.setVolume(s.volume);
+    this.audio.setTheme(s.soundTheme);
     this.map.headingUp = s.headingUpMap;
     if (s.vehicle !== this.vehicle.id) this.setVehicle(s.vehicle, false);
   }
@@ -2077,6 +2079,13 @@ export class Game {
         saveSettings(this.settings);
         return this.speech.say(this.settings.headingUpMap ? 'Map rotates with heading.' : 'Map north up.', 'high');
       case 'a':
+        if (c.shift) {
+          this.settings.soundTheme = nextTheme(this.settings.soundTheme);
+          this.audio.setTheme(this.settings.soundTheme);
+          saveSettings(this.settings);
+          this.audio.loaded();
+          return this.speech.say(THEME_TEXT[this.settings.soundTheme], 'high');
+        }
         this.settings.roadAssist = !this.settings.roadAssist;
         saveSettings(this.settings);
         return this.speech.say(`Road assist ${this.settings.roadAssist ? 'on' : 'off'}.`, 'high');
@@ -2146,7 +2155,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
-        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
+        '1 to 4 change vehicle. Control comma opens settings. A toggles road assist, Shift A cycles sound themes. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );

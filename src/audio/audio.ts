@@ -2,6 +2,7 @@
 
 import type { PlaceGroup } from '../world';
 import type { VehicleId } from '../settings';
+import { CUES, THEMES, type CueTune, type SoundTheme } from './themes';
 
 export interface EngineState {
   speed: number;
@@ -33,7 +34,24 @@ export class AudioEngine {
   private reverb: ConvolverNode;
   private reverbSend: GainNode;
 
-  constructor(volume: number) {
+  private theme: SoundTheme = 'classic';
+  private tune: CueTune | null = null; // the running cue's theme tuning
+
+  constructor(volume: number, theme: SoundTheme = 'classic') {
+    this.theme = theme;
+    // Cues synthesise synchronously, so wrapping each one lets tone() see its tuning without touching every cue.
+    for (const name of CUES) {
+      const cue = (this as any)[name] as (...args: unknown[]) => void;
+      (this as any)[name] = (...args: unknown[]) => {
+        const prev = this.tune;
+        this.tune = THEMES[this.theme][name];
+        try {
+          cue.apply(this, args);
+        } finally {
+          this.tune = prev;
+        }
+      };
+    }
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
     const ctx = this.ctx;
 
@@ -115,6 +133,10 @@ export class AudioEngine {
     this.bed.gain.setTargetAtTime(on ? depth : 1, this.now, 0.08);
   }
 
+  setTheme(t: SoundTheme) {
+    this.theme = t;
+  }
+
   setVehicle(id: VehicleId) {
     this.voice?.dispose();
     this.voice = makeVoice(id, this, this.bed);
@@ -157,7 +179,7 @@ export class AudioEngine {
     f.Q.value = q;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(level, when + 0.005);
+    g.gain.linearRampToValueAtTime(level * (this.tune?.level ?? 1), when + 0.005);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     src.connect(f).connect(g).connect(dest);
     src.start(when, Math.random() * 1.5, dur + 0.05);
@@ -170,13 +192,14 @@ export class AudioEngine {
     const ctx = this.ctx;
     const when = opts.when ?? this.now;
     const dur = opts.dur ?? 0.12;
+    const tune = this.tune ?? { level: 1, pitch: 1 };
     const o = ctx.createOscillator();
-    o.type = opts.type ?? 'sine';
-    o.frequency.setValueAtTime(freq, when);
-    if (opts.glideTo) o.frequency.exponentialRampToValueAtTime(opts.glideTo, when + dur);
+    o.type = tune.wave ?? opts.type ?? 'sine';
+    o.frequency.setValueAtTime(freq * tune.pitch, when);
+    if (opts.glideTo) o.frequency.exponentialRampToValueAtTime(opts.glideTo * tune.pitch, when + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(opts.level ?? 0.2, when + 0.008);
+    g.gain.linearRampToValueAtTime((opts.level ?? 0.2) * tune.level, when + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
     o.connect(g).connect(opts.dest ?? this.master);
     o.start(when);
