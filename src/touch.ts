@@ -44,8 +44,14 @@ export function perform(game: Driver, a: Action) {
   }
   if (!('drive' in a)) return game.run(a.key, a);
   clearTimeout(brakeTimer);
-  game.hold('ArrowUp', a.drive === 'go');
-  game.hold('Slash', a.drive === 'brake');
+  // press the new key before releasing the old one, so the switch itself is not announced as a stop
+  if (a.drive === 'go') {
+    game.hold('ArrowUp', true);
+    game.hold('Slash', false);
+  } else {
+    game.hold('Slash', true);
+    game.hold('ArrowUp', false);
+  }
   // a swipe is momentary, so braking lets go by itself instead of needing a second gesture
   if (a.drive === 'brake') brakeTimer = setTimeout(() => game.hold('Slash', false), BRAKE_MS);
 }

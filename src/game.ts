@@ -552,7 +552,10 @@ export class Game {
   }
 
   hold(code: string, on: boolean) {
+    const was = this.input.isDown(code);
+    if (on && !was) this.speedAtPress = this.speed; // touch and voice get the same speed announcement as the keys
     this.input.setHeld(code, on);
+    if (!on && was) this.keyUp(code);
   }
 
   pause() {

@@ -696,3 +696,14 @@ describe('minutesText', () => {
     expect([1, 59, 60, 61, 120, 121, 181].map(minutesText)).toEqual(['1 minute', '59 minutes', '1 hour', '1 hour 1 minute', '2 hours', '2 hours 1 minute', '3 hours 1 minute']);
   });
 });
+
+describe('hold (touch and voice)', () => {
+  it('announces the speed change when a held brake lets go', () => {
+    const { game, said, g } = setup();
+    g.speed = 5;
+    game.hold('Slash', true);
+    g.speed = 0;
+    game.hold('Slash', false);
+    expect(said.at(-1)).toBe('Stopped.');
+  });
+});
