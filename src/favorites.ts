@@ -9,7 +9,8 @@ const KEY = 'audio-map-favorites';
 export function loadFavorites(): Favorite[] {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]');
-    return Array.isArray(raw) ? raw : [];
+    // stored data is untrusted: drop entries the UI could not use
+    return Array.isArray(raw) ? raw.filter((f) => typeof f?.name === 'string' && Number.isFinite(f.lat) && Number.isFinite(f.lon)) : [];
   } catch {
     return [];
   }
