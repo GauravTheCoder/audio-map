@@ -10,6 +10,7 @@ export class Speech {
   private polite: HTMLElement;
   private assertive: HTMLElement;
   private flip = false;
+  private queued = new WeakMap<HTMLElement, () => void>();
   private history: string[] = [];
   private historyPos = -1;
   private lastText = '';
@@ -64,12 +65,39 @@ export class Speech {
       return;
     }
     // Screen reader path. Alternate text nodes so repeating the same message is still announced.
-    const region = priority === 'high' ? this.assertive : this.polite;
-    this.flip = !this.flip;
-    region.textContent = '';
-    const span = document.createElement('span');
-    span.textContent = this.flip ? text : `${text} `;
-    region.appendChild(span);
+    const region = this.region(priority === 'high');
+    const flip = (this.flip = !this.flip);
+    const write = () => {
+      region.textContent = '';
+      const span = document.createElement('span');
+      span.textContent = flip ? text : `${text} `;
+      region.appendChild(span);
+    };
+    // screen readers miss content that arrives together with a brand-new live region, so messages
+    // in its first moments wait, and only the newest of them is spoken
+    const wait = Number(region.dataset.readyAt ?? 0) - performance.now();
+    if (wait <= 0) return write();
+    const queued = this.queued.has(region);
+    this.queued.set(region, write);
+    if (!queued)
+      setTimeout(() => {
+        const w = this.queued.get(region);
+        this.queued.delete(region);
+        w?.();
+      }, wait);
+  }
+
+  /** An open modal dialog makes the page inert, so its messages go to a live region inside it. */
+  private region(assertive: boolean): HTMLElement {
+    const dlgs = document.querySelectorAll('dialog[open]');
+    const dlg = dlgs[dlgs.length - 1];
+    if (!dlg) return assertive ? this.assertive : this.polite;
+    const kind = assertive ? 'assertive' : 'polite';
+    const have = dlg.querySelector<HTMLElement>(`:scope > [data-live="${kind}"]`);
+    if (have) return have;
+    const el = mkRegion(kind, dlg);
+    el.dataset.readyAt = String(performance.now() + 100);
+    return el;
   }
 
   stop() {
@@ -90,11 +118,12 @@ export class Speech {
   }
 }
 
-function mkRegion(politeness: 'polite' | 'assertive'): HTMLElement {
+function mkRegion(politeness: 'polite' | 'assertive', parent: Element = document.body): HTMLElement {
   const el = document.createElement('div');
   el.setAttribute('aria-live', politeness);
   el.setAttribute('aria-atomic', 'true');
   el.className = 'sr-only';
-  document.body.appendChild(el);
+  el.dataset.live = politeness;
+  parent.appendChild(el);
   return el;
 }
