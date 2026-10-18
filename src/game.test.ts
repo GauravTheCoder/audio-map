@@ -802,6 +802,41 @@ describe('grid mode turn by turn', () => {
     expect(said.at(-1)).toMatch(/At the turn\. Elm End 150 metres east\.$/);
   });
 
+  it('a route planned in grid mode is announced in grid terms, without turn around or left and right', async () => {
+    const h = setup();
+    h.g.areas = { at: vi.fn(async () => ({ key: 'open', kind: 'open ground', sound: 'open' })), has: () => true };
+    h.g.loadCenter = { x: 0, y: 0 };
+    h.g.heading = 180; // was facing away from the route
+    h.game.run('F3');
+    await flush();
+    h.game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    const spoken = h.said.join(' ');
+    expect(spoken).toContain('Destination Elm End, 150 metres north and 150 metres east.');
+    expect(spoken).toMatch(/Route \d+ metres\. Next turn 150 metres north, then east on Elm Street\./);
+    expect(spoken).not.toMatch(/Turn around|turn (left|right)|o'clock/);
+    h.game.run('g');
+    expect(h.said.at(-1)).toContain('Elm End, 150 metres north and 150 metres east');
+  });
+
+  it('N finds the nearest intersection in grid terms; twice steps onto it', async () => {
+    const { game, said, g } = await routed();
+    game.run('n');
+    expect(said.at(-1)).toBe('Oak Street and Elm Street, 150 metres north. Press N twice to step onto it.');
+    g.lastNPress = performance.now(); // as if pressed a moment ago
+    game.run('n');
+    await flush();
+    expect(g.y).toBeCloseTo(200);
+    expect(g.heading).toBe(0);
+    expect(said.at(-1)).toMatch(/^Oak Street and Elm Street\./);
+  });
+
+  it('lists places by compass direction rather than clock', async () => {
+    const { game, said } = await routed();
+    game.run('w');
+    expect(said.at(-1)).toBe('Blue Cafe, cafe, 50 metres north.');
+  });
+
   it('I says the same in grid terms', async () => {
     const { game, said } = await routed();
     game.run('i');

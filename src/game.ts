@@ -1524,8 +1524,7 @@ export class Game {
     const mark = MILESTONES.find((m) => remaining <= m);
     if (mark !== undefined && mark < this.destMilestone) {
       this.destMilestone = mark;
-      const rel = relAngle(this.heading, bearingTo(this.x, this.y, this.dest.x, this.dest.y));
-      this.speech.say(`${this.dest.name}, ${fmtDistance(remaining, this.settings.units)}${r ? ' to go' : ` at ${clockDir(rel)}`}.`, 'low');
+      this.speech.say(`${this.dest.name}, ${fmtDistance(remaining, this.settings.units)}${r ? ' to go' : ` ${this.dirTo(this.dest.x, this.dest.y)}`}.`, 'low');
     }
   }
 
@@ -1768,6 +1767,11 @@ export class Game {
     const walker = this.vehicle.id === 'walker';
     const kind = `${walker && this.settings.accessibleRoute ? 'Accessible ' : ''}${walker && this.settings.walkRoute === 'streets' ? 'street route' : 'route'}`.replace(/^./, (ch) => ch.toUpperCase());
     const lead = `${kind} ${fmtDistance(r.length, u)}${r.partial ? ', as far as the map has loaded; it will extend as you go' : ''}. `;
+    if (this.grid) {
+      // no way you are facing in grid mode: say where the first turn is instead of "turn left"
+      this.grid.turn = undefined;
+      return this.speech.say(lead + this.gridRouteHint(), 'normal');
+    }
     const step =
       first.kind === 'arrive'
         ? r.partial
@@ -2104,6 +2108,7 @@ export class Game {
         const double = now - this.lastNPress < 400 && this.lastNShift === back;
         this.lastNPress = double ? -Infinity : now; // a third quick press starts over
         this.lastNShift = back;
+        if (this.grid) return this.gridIntersection(double);
         if (double) return this.jump(back ? -1 : 1);
         return back ? this.previousIntersection() : this.nextIntersection();
       }
@@ -2294,7 +2299,7 @@ export class Game {
       const hit = this.world!.nearestRoad(this.x, this.y, 150, (w) => w.named);
       parts.push(
         hit
-          ? `Off road. ${hit.seg.way.name} is ${fmtDistance(hit.hit.dist, this.settings.units)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, hit.hit.px, hit.hit.py)))}`
+          ? `Off road. ${hit.seg.way.name} is ${fmtDistance(hit.hit.dist, this.settings.units)} ${this.dirTo(hit.hit.px, hit.hit.py)}`
           : 'Off road, no streets nearby',
       );
     }
@@ -2741,7 +2746,7 @@ export class Game {
       .map((a) => ({ a, d: dist(this.x, this.y, a.x, a.y) }))
       .sort((p, q) => p.d - q.d)
       .slice(0, 4)
-      .map(({ a, d }) => `${a.name ? `${a.kind} ${a.name}` : a.kind}, ${fmtDistance(d, u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, a.x, a.y)))}`);
+      .map(({ a, d }) => `${a.name ? `${a.kind} ${a.name}` : a.kind}, ${fmtDistance(d, u)} ${this.dirTo(a.x, a.y)}`);
     this.speech.say(list.length ? `${list.join('. ')}.` : 'No entrances, platforms or lifts on the loaded map.', 'high');
   }
 
@@ -2837,7 +2842,7 @@ export class Game {
   /** E: everything for when you are lost: street, area, nearest landmark and nearest transit stop. */
   private async whereAmI() {
     const u = this.settings.units;
-    const at = (p: Place) => `${this.placeText(p, true)}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y)))}`;
+    const at = (p: Place) => `${this.placeText(p, true)}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${this.dirTo(p.x, p.y)}`;
     const near = this.world!.placesNear(this.x, this.y, 400);
     const landmark = (near.find((n) => placeTier(n.place) >= 1) ?? near[0])?.place;
     const stop = this.transitStops()[0]?.p;
@@ -2870,7 +2875,7 @@ export class Game {
     const list = this.nearby(this.vehicle.scanRadius).slice(0, 6);
     if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
     const text = list
-      .map(({ place, d }) => `${this.placeText(place)}, ${fmtDistance(d, this.settings.units)} at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`)
+      .map(({ place, d }) => `${this.placeText(place)}, ${fmtDistance(d, this.settings.units)} ${this.dirTo(place.x, place.y)}`)
       .join('. ');
     this.speech.say(text + '.', 'high');
   }
@@ -3009,6 +3014,31 @@ export class Game {
     return parts.join(' and ');
   }
 
+  /** Where a point lies from here: a compass direction in grid mode (no way you face), else a clock direction. */
+  private dirTo(x: number, y: number): string {
+    return this.grid ? compass8(bearingTo(this.x, this.y, x, y)) : `at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, x, y)))}`;
+  }
+
+  /** N in grid mode: the nearest intersection, how far each way; pressed twice, step onto it. */
+  private gridIntersection(move: boolean) {
+    const w = this.world!;
+    let best: { n: GNode; d: number } | null = null;
+    for (const n of w.nodesNear(this.x, this.y, 400)) {
+      if (!w.isIntersection(n, this.filter)) continue;
+      const d = dist(this.x, this.y, n.x, n.y);
+      if (!best || d < best.d) best = { n, d };
+    }
+    if (!best) return this.speech.say(`No intersection within ${this.gridDistance(400)}.`, 'high');
+    const names = [...new Set(best.n.edges.filter((e) => e.way.named).map((e) => e.way.name))];
+    const label = names.length ? names.slice(0, 3).join(' and ') : 'Intersection';
+    if (move) {
+      this.place(best.n.x, best.n.y, 0, null);
+      return void this.gridLook(true, `${label}.`);
+    }
+    const off = this.gridOffset(best.n.x, best.n.y);
+    this.speech.say(off ? `${label}, ${off}. Press N twice to step onto it.` : `You are at ${label}.`, 'high');
+  }
+
   /**
    * Turn by turn for grid mode: how far north or south and east or west the next turn is, and which
    * way the route heads from there. "Next turn 80 metres north and 10 metres east, then east on Green Street."
@@ -3071,7 +3101,7 @@ export class Game {
     const d = dist(this.x, this.y, p.x, p.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y));
     this.audio.placeCue(p.group, rel, 0.3);
-    this.speech.say(`${this.placeText(p)}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}. ${b.idx + 1} of ${b.list.length}`, 'high');
+    this.speech.say(`${this.placeText(p)}, ${fmtDistance(d, this.settings.units)} ${this.dirTo(p.x, p.y)}. ${b.idx + 1} of ${b.list.length}`, 'high');
   }
 
   private setDestination() {
@@ -3095,7 +3125,8 @@ export class Game {
     const d = dist(this.x, this.y, t.x, t.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y));
     const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter';
-    this.speech.say(`Destination ${t.name}${t.detail ? `, ${t.detail}` : ''}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}.${guided ? '' : ' Follow the beacon.'}`, 'high');
+    const where = this.grid ? this.gridOffset(t.x, t.y) : `${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}`;
+    this.speech.say(`Destination ${t.name}${t.detail ? `, ${t.detail}` : ''}, ${where}.${guided ? '' : ' Follow the beacon.'}`, 'high');
     if (guided) void this.computeRoute(true);
     else this.clearRoute();
     void this.lookUpLines(t);
@@ -3268,7 +3299,8 @@ export class Game {
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     const b = bearingTo(this.x, this.y, this.dest.x, this.dest.y);
     const t = this.dest;
-    const straight = `${t.name}${t.detail ? `, ${t.detail}` : ''}, ${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
+    const where = this.grid ? this.gridOffset(t.x, t.y) : `${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
+    const straight = `${t.name}${t.detail ? `, ${t.detail}` : ''}, ${where}`;
     const lines = t.lines ? ` ${t.lines}` : '';
     const r = this.route;
     if (!r) return this.speech.say(`${straight}.${lines}`, 'high');
@@ -3407,7 +3439,7 @@ export class Game {
     let destination = '';
     if (this.dest) {
       const d = dist(this.x, this.y, this.dest.x, this.dest.y);
-      destination = `${this.dest.name} · ${fmtDistance(d, u)} · ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, this.dest.x, this.dest.y)))}`;
+      destination = `${this.dest.name} · ${fmtDistance(d, u)} · ${this.dirTo(this.dest.x, this.dest.y)}`;
       const m = this.upcoming();
       if (m && m.kind !== 'arrive') destination += ` · ${this.stepText(m, this.dest.name)} in ${fmtDistance(m.d - this.routeProg, u)}`;
     }
