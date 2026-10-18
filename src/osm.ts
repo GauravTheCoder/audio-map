@@ -412,6 +412,19 @@ export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]
   });
 }
 
+/** The two-letter country code (lower case) at a point, or null if it cannot be found. */
+export async function fetchCountry(p: LatLon): Promise<string | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=3&lat=${p.lat}&lon=${p.lon}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { address?: { country_code?: string } };
+    return json.address?.country_code?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function reverseGeocode(p: LatLon): Promise<string | null> {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&lat=${p.lat}&lon=${p.lon}`;

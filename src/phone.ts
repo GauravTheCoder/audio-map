@@ -1,0 +1,361 @@
+// Phone mode: a touch map that works with VoiceOver and TalkBack instead of overriding them.
+// The map is a 7 by 7 grid of buttons; a screen reader reads each square as the finger moves over
+// it, and without one the app speaks it and plays its ground sound. Travel mode follows your real
+// location with "up" the street you face; explore mode is north up and pans by buttons.
+
+import type { AreaSound } from './areas';
+import { compass8, dist } from './geo';
+import type { ActionId, Binding } from './keymap';
+import type { Units } from './settings';
+
+export const N = 7;
+const MID = (N - 1) / 2;
+/** sizes of a square, in metres or yards */
+export const SQUARES = [10, 20, 50];
+
+export interface PhoneGame {
+  readonly pose: { x: number; y: number; heading: number; live: boolean; ready: boolean; units: Units };
+  readonly hasDestination: boolean;
+  describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null>;
+  hoodAt(x: number, y: number): Promise<string | null>;
+  areaCue(sound: AreaSound): void;
+  streetUp(heading: number): { dir: number; street?: string };
+  directionsText(): string;
+  announce(text: string): void;
+  setTarget(t: { name: string; x: number; y: number }): void;
+  startLive(): void;
+  run(key: string, mods?: { shift?: boolean; ctrl?: boolean }): void;
+  keyFor(id: ActionId): Binding;
+}
+
+export interface PhoneHooks {
+  openSearch(): void;
+  openMenu(): void;
+  /** switch between the screen reader and the built-in voice; returns the button's new label */
+  toggleVoice(): string;
+  voiceLabel(): string;
+  /** turn on turn by turn and the beacon, and keep the screen awake */
+  guide(): void;
+}
+
+/** Metres in one unit of distance. */
+const unitM = (u: Units) => (u === 'imperial' ? 0.9144 : 1);
+
+/** The centre of square (row, col): rows count down from the top, which faces `up` degrees. */
+export function cellPoint(cx: number, cy: number, up: number, size: number, row: number, col: number): { x: number; y: number } {
+  const right = (col - MID) * size;
+  const ahead = (MID - row) * size;
+  const r = (up * Math.PI) / 180;
+  return { x: cx + right * Math.cos(r) + ahead * Math.sin(r), y: cy - right * Math.sin(r) + ahead * Math.cos(r) };
+}
+
+/** "40 metres ahead, 20 metres right" (travel) or "40 metres north, 20 metres east" (explore); '' for the centre. */
+export function offsetText(row: number, col: number, n: number, units: Units, travel: boolean): string {
+  const unit = units === 'imperial' ? 'yard' : 'metre';
+  const amount = (k: number) => `${Math.abs(k) * n} ${unit}${Math.abs(k) * n === 1 ? '' : 's'}`;
+  const fwd = MID - row;
+  const side = col - MID;
+  const parts: string[] = [];
+  if (fwd) parts.push(`${amount(fwd)} ${travel ? (fwd > 0 ? 'ahead' : 'behind') : fwd > 0 ? 'north' : 'south'}`);
+  if (side) parts.push(`${amount(side)} ${travel ? (side > 0 ? 'right' : 'left') : side > 0 ? 'east' : 'west'}`);
+  return parts.join(', ');
+}
+
+export interface UpState {
+  dir: number;
+  street?: string;
+  pending?: { dir: number; street?: string; since: number };
+}
+
+/**
+ * Settle on which way is up: a new direction must hold for a second before the map turns, so a
+ * wobbling compass or a glance aside does not spin it. Returns the state and whether it turned.
+ */
+export function nextUp(prev: UpState | null, seen: { dir: number; street?: string }, now: number): { state: UpState; turned: boolean } {
+  if (!prev) return { state: { dir: seen.dir, street: seen.street }, turned: true };
+  if (seen.dir === prev.dir) return { state: { dir: prev.dir, street: seen.street ?? prev.street }, turned: false };
+  if (!prev.pending || prev.pending.dir !== seen.dir) return { state: { ...prev, pending: { ...seen, since: now } }, turned: false };
+  if (now - prev.pending.since < 1000) return { state: prev, turned: false };
+  return { state: { dir: seen.dir, street: seen.street }, turned: true };
+}
+
+interface Cell {
+  x: number;
+  y: number;
+  text: string;
+  sound: AreaSound;
+  named: boolean;
+  label: string;
+}
+
+export class Phone {
+  mode: 'travel' | 'explore' = 'travel';
+  private sizeIdx = 1;
+  private centre: { x: number; y: number } | null = null;
+  private up: UpState | null = null;
+  private frame: { cx: number; cy: number; up: number; size: number; units: Units; mode: string } | null = null;
+  private cells: (Cell | null)[] = [];
+  private buttons: HTMLButtonElement[] = [];
+  private selected = -1;
+  private seq = 0;
+  private timer: ReturnType<typeof setInterval> | undefined;
+  private touching = false;
+  private lastHover = -1;
+  private started = false;
+
+  constructor(
+    private root: HTMLElement,
+    private getGame: () => PhoneGame | null,
+    private hooks: PhoneHooks,
+  ) {
+    const grid = this.el('ph-grid');
+    for (let i = 0; i < N * N; i++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cell';
+      b.dataset.i = String(i);
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', () => void this.choose(i));
+      grid.appendChild(b);
+      this.buttons.push(b);
+    }
+    // without a screen reader: sliding a finger speaks each square and plays its sound.
+    // With one, the screen reader takes the touches itself and reads each square's label.
+    grid.addEventListener('pointerdown', (e) => {
+      this.touching = true;
+      this.hover(e);
+    });
+    grid.addEventListener('pointermove', (e) => this.touching && this.hover(e));
+    const lift = () => {
+      this.touching = false;
+      this.lastHover = -1;
+    };
+    grid.addEventListener('pointerup', lift);
+    grid.addEventListener('pointercancel', lift);
+
+    this.el('ph-dirs').addEventListener('click', () => this.game((g) => g.announce(this.el('ph-dirs').textContent ?? '')));
+    this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
+    this.el('ph-start').addEventListener('click', () => this.start());
+    this.el('ph-here').addEventListener('click', () => this.action('whereAmI'));
+    this.el('ph-end').addEventListener('click', () => {
+      this.started = false;
+      this.action('clearDestination');
+    });
+    const pan = (dx: number, dy: number, word: string) => () => this.pan(dx, dy, word);
+    this.el('ph-north').addEventListener('click', pan(0, 1, 'north'));
+    this.el('ph-south').addEventListener('click', pan(0, -1, 'south'));
+    this.el('ph-west').addEventListener('click', pan(-1, 0, 'west'));
+    this.el('ph-east').addEventListener('click', pan(1, 0, 'east'));
+    this.el('ph-smaller').addEventListener('click', () => this.zoom(-1));
+    this.el('ph-larger').addEventListener('click', () => this.zoom(1));
+    this.el('ph-centre').addEventListener('click', () => {
+      this.centre = null;
+      this.game((g) => g.announce('Centred on you.'));
+    });
+    this.el('ph-dest').addEventListener('click', () => this.setDestination());
+    this.el('ph-voice').addEventListener('click', () => (this.el('ph-voice').textContent = this.hooks.toggleVoice()));
+    this.el('ph-menu').addEventListener('click', () => this.hooks.openMenu());
+    this.el('ph-mode').addEventListener('click', () => this.setMode(this.mode === 'travel' ? 'explore' : 'travel', true));
+  }
+
+  get active(): boolean {
+    return !this.root.hidden;
+  }
+
+  show(mode: 'travel' | 'explore') {
+    this.root.hidden = false;
+    this.el('ph-voice').textContent = this.hooks.voiceLabel();
+    this.setMode(mode, false);
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.tick(), 250);
+    this.tick();
+    this.el('ph-dirs').focus();
+  }
+
+  hide() {
+    this.root.hidden = true;
+    clearInterval(this.timer);
+  }
+
+  setMode(mode: 'travel' | 'explore', announce: boolean) {
+    this.mode = mode;
+    const travel = mode === 'travel';
+    this.el('ph-travel').hidden = !travel;
+    this.el('ph-explore').hidden = travel;
+    this.el('ph-mode').textContent = travel ? 'Travel mode. Switch to explore' : 'Explore mode. Switch to travel';
+    this.frame = null; // draw afresh for the new mode
+    this.up = null;
+    if (announce)
+      this.game((g) =>
+        g.announce(
+          travel
+            ? 'Travel mode. The map follows you, with up the street you face. Touch a square to hear what is there.'
+            : 'Explore mode. North is up. Pan and zoom with the buttons below the map.',
+        ),
+      );
+  }
+
+  /** Every quarter second: follow the traveller and compass, and keep the directions current. */
+  private tick() {
+    const g = this.getGame();
+    const status = this.el('ph-status');
+    if (!g || !g.pose.ready) {
+      status.textContent = 'Loading the map…';
+      return;
+    }
+    const p = g.pose;
+    const travel = this.mode === 'travel';
+    const units = p.units;
+    const size = SQUARES[this.sizeIdx] * unitM(units);
+    let cx = p.x;
+    let cy = p.y;
+    let up = 0;
+    let turned = false;
+    if (travel) {
+      const r = nextUp(this.up, g.streetUp(p.heading), performance.now());
+      turned = r.turned && !!this.up;
+      this.up = r.state;
+      up = r.state.dir;
+    } else {
+      this.centre ??= { x: p.x, y: p.y };
+      cx = this.centre.x;
+      cy = this.centre.y;
+    }
+    const f = this.frame;
+    if (!f || f.up !== up || f.size !== size || f.units !== units || f.mode !== this.mode || dist(f.cx, f.cy, cx, cy) > size / 2) {
+      this.frame = { cx, cy, up, size, units, mode: this.mode };
+      void this.render();
+      if (turned) g.announce(`Map turned: up is ${this.up?.street ? `${this.up.street}, ` : ''}${compass8(up)}.`);
+    }
+    const n = SQUARES[this.sizeIdx];
+    const unit = units === 'imperial' ? 'yard' : 'metre';
+    status.textContent = travel ? `Up: ${this.up?.street ? `${this.up.street}, ` : ''}${compass8(up)} · squares of ${n} ${unit}s` : `North up · squares of ${n} ${unit}s`;
+    const dirs = travel ? g.directionsText() || (g.hasDestination ? '' : 'Choose a destination: tap Where to.') : 'Exploring. Touch the map, or pan with the buttons.';
+    const d = this.el('ph-dirs');
+    if (dirs && d.textContent !== dirs) d.textContent = dirs;
+  }
+
+  /** Work out what every square holds and label it. */
+  private async render() {
+    const g = this.getGame();
+    const f = this.frame;
+    if (!g || !f) return;
+    const seq = ++this.seq;
+    const travel = f.mode === 'travel';
+    const n = SQUARES[this.sizeIdx];
+    const found = await Promise.all(
+      this.buttons.map(async (_b, i) => {
+        const row = Math.floor(i / N);
+        const col = i % N;
+        const at = cellPoint(f.cx, f.cy, f.up, f.size, row, col);
+        const d = await g.describeAt(at.x, at.y);
+        if (!d) return null;
+        const off = offsetText(row, col, n, f.units, travel);
+        const label = off ? `${d.text}, ${off}` : `${travel ? 'You are here' : 'Centre'}: ${d.text}`;
+        return { ...at, ...d, label };
+      }),
+    );
+    if (seq !== this.seq) return; // a newer frame has replaced this one
+    this.cells = found;
+    this.select(-1);
+    found.forEach((c, i) => {
+      const b = this.buttons[i];
+      b.classList.toggle('me', i === (N * N - 1) / 2);
+      if (!c) {
+        b.textContent = '';
+        b.setAttribute('aria-label', 'Not loaded yet');
+        delete b.dataset.sound;
+        return;
+      }
+      b.textContent = c.text.split(',')[0];
+      b.setAttribute('aria-label', c.label);
+      b.dataset.sound = c.sound;
+    });
+  }
+
+  private hover(e: PointerEvent) {
+    const el = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>('.cell');
+    const i = el ? Number(el.dataset.i) : -1;
+    if (i < 0 || i === this.lastHover) return;
+    this.lastHover = i;
+    const c = this.cells[i];
+    const g = this.getGame();
+    if (!c || !g) return;
+    g.areaCue(c.sound);
+    g.announce(c.label);
+  }
+
+  /** A double tap (or a tap without a screen reader) on a square: say more, and offer it as a destination. */
+  private async choose(i: number) {
+    const c = this.cells[i];
+    const g = this.getGame();
+    if (!c || !g) return;
+    this.select(i);
+    const hood = c.named ? null : await g.hoodAt(c.x, c.y);
+    g.announce(`${c.label}.${hood ? ` Near ${hood}.` : ''} Set as destination is below the map.`);
+  }
+
+  private select(i: number) {
+    this.selected = i;
+    this.buttons.forEach((b, k) => b.setAttribute('aria-pressed', String(k === i)));
+    const dest = this.el<HTMLButtonElement>('ph-dest');
+    const c = this.cells[i];
+    dest.disabled = !c;
+    dest.textContent = c ? `Set as destination: ${c.text.split(',')[0]}` : 'Set as destination';
+  }
+
+  private setDestination() {
+    const c = this.cells[this.selected];
+    this.game((g) => {
+      if (!c) return g.announce('Double tap a square on the map first.');
+      g.setTarget({ name: c.text.split(',')[0], x: c.x, y: c.y });
+      if (this.mode === 'travel' && !this.started) g.announce('Tap Start to be guided there.');
+    });
+  }
+
+  private start() {
+    this.game((g) => {
+      if (!g.hasDestination) return g.announce('Choose a destination first: tap Where to, or double tap a square and Set as destination.');
+      this.started = true;
+      this.hooks.guide();
+      g.startLive(); // from this tap, so iOS can ask for the compass
+      g.announce('Starting. The directions are at the top of the screen; follow the beacon. The map turns with you.');
+    });
+  }
+
+  private pan(dx: number, dy: number, word: string) {
+    const g = this.getGame();
+    if (!g?.pose.ready) return;
+    const p = g.pose;
+    const c = (this.centre ??= { x: p.x, y: p.y });
+    const step = N * SQUARES[this.sizeIdx] * unitM(p.units);
+    c.x += dx * step;
+    c.y += dy * step;
+    g.announce(`Moved ${word} ${N * SQUARES[this.sizeIdx]} ${p.units === 'imperial' ? 'yards' : 'metres'}.`);
+  }
+
+  private zoom(d: 1 | -1) {
+    const i = Math.max(0, Math.min(SQUARES.length - 1, this.sizeIdx + d));
+    const g = this.getGame();
+    const unit = g?.pose.units === 'imperial' ? 'yards' : 'metres';
+    const lead = i === this.sizeIdx ? (d > 0 ? 'Largest squares' : 'Smallest squares') : 'Squares';
+    this.sizeIdx = i;
+    g?.announce(`${lead} of ${SQUARES[i]} ${unit}; the map shows ${N * SQUARES[i]} ${unit} across.`);
+  }
+
+  private action(id: ActionId) {
+    this.game((g) => {
+      const b = g.keyFor(id);
+      g.run(b.key, b);
+    });
+  }
+
+  private game(fn: (g: PhoneGame) => void) {
+    const g = this.getGame();
+    if (g) fn(g);
+  }
+
+  private el<T extends HTMLElement = HTMLElement>(id: string): T {
+    return document.getElementById(id) as T;
+  }
+}

@@ -4,12 +4,12 @@ import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
 import { World, type Place } from './world';
-import { fetchNamedAreas, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode } from './osm';
+import { fetchCountry, fetchNamedAreas, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode } from './osm';
 import { fetchTileArea } from './tiles';
 import type { RawPlaces, RawRoads } from './osm';
 
 vi.mock('./onlineRouter', () => ({ hasOnlineRouting: () => false, fetchOnlineRoute: vi.fn() }));
-vi.mock('./osm', async (orig) => ({ ...(await orig<typeof import('./osm')>()), fetchRoads: vi.fn(), fetchPlaces: vi.fn(), fetchRoadsBox: vi.fn(), reverseGeocode: vi.fn(), fetchStopRoutes: vi.fn(), fetchNamedAreas: vi.fn() }));
+vi.mock('./osm', async (orig) => ({ ...(await orig<typeof import('./osm')>()), fetchRoads: vi.fn(), fetchPlaces: vi.fn(), fetchRoadsBox: vi.fn(), reverseGeocode: vi.fn(), fetchStopRoutes: vi.fn(), fetchNamedAreas: vi.fn(), fetchCountry: vi.fn(async () => null) }));
 vi.mock('./tiles', () => ({ fetchTileArea: vi.fn() }));
 vi.stubGlobal('requestAnimationFrame', () => 0);
 
@@ -955,5 +955,48 @@ describe('grid mode names', () => {
     vi.mocked(fetchNamedAreas).mockResolvedValue([{ name: 'Navy Accounts Office', building: false, ring: sq(-50, 0, 100, 150) }]);
     const o = await at({ sound: 'open', kind: 'open ground', key: 'open' });
     expect(o.said.at(-1)).toBe('Navy Accounts Office, grounds.');
+  });
+});
+
+describe('phone screen', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('snaps "up" to the street within 30 degrees, else to the nearest compass point', () => {
+    const { game } = setup(); // on Oak Street, which runs north
+    expect(game.streetUp(10)).toEqual({ dir: 0, street: 'Oak Street' });
+    expect(game.streetUp(165)).toEqual({ dir: 180, street: 'Oak Street' });
+    expect(game.streetUp(60)).toEqual({ dir: 45 });
+  });
+
+  it('describes any point: the road there, or what the tiles and OpenStreetMap say', async () => {
+    const { game, g } = setup();
+    g.areas = { at: vi.fn(async () => ({ key: 'b1', sound: 'building', kind: 'building', number: '12' })), hood: vi.fn(async () => 'Kala Ghoda') };
+    expect(await game.describeAt(0, 100)).toEqual({ text: 'Oak Street', sound: 'road', named: true });
+    expect(await game.describeAt(20, 100)).toEqual({ text: 'building number 12 on Oak Street', sound: 'building', named: true });
+    expect(await game.hoodAt(20, 100)).toBe('Kala Ghoda');
+  });
+
+  it('gives the next instruction as text for the directions panel', async () => {
+    const { game } = setup();
+    expect(game.directionsText()).toBe('');
+    game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    expect(game.directionsText()).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
+  });
+
+  it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
+    const units: string[] = [];
+    vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
+    const { g } = setup();
+    g.onUnits = (u: string) => units.push(u);
+    await g.autoUnits({ lat: 40.1, lon: -88.2 });
+    expect(g.settings.units).toBe('imperial');
+    await g.autoUnits({ lat: 18.9, lon: 72.8 });
+    expect(g.settings.units).toBe('metric');
+    expect(units).toEqual(['imperial', 'metric']);
+    g.settings.unitsChosen = true;
+    vi.mocked(fetchCountry).mockResolvedValueOnce('us');
+    await g.autoUnits({ lat: 40.1, lon: -88.2 });
+    expect(g.settings.units).toBe('metric');
   });
 });

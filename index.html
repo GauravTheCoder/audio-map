@@ -33,10 +33,38 @@
       </div>
     </div>
 
+    <section id="phone" hidden aria-label="Phone">
+      <button type="button" id="ph-dirs" class="ph-dirs">Choose a destination: tap Where to.</button>
+      <div id="ph-grid" role="group" aria-label="Map. Touch a square to hear what is there; double tap for more."></div>
+      <p id="ph-status" class="ph-status"></p>
+      <div id="ph-travel" class="ph-row">
+        <button type="button" id="ph-where">Where to?</button>
+        <button type="button" id="ph-start" class="primary">Start</button>
+        <button type="button" id="ph-here">Where am I</button>
+        <button type="button" id="ph-end">End route</button>
+      </div>
+      <div id="ph-explore" class="ph-row" hidden>
+        <button type="button" id="ph-north">Pan north</button>
+        <button type="button" id="ph-south">Pan south</button>
+        <button type="button" id="ph-west">Pan west</button>
+        <button type="button" id="ph-east">Pan east</button>
+        <button type="button" id="ph-smaller">Smaller squares</button>
+        <button type="button" id="ph-larger">Larger squares</button>
+        <button type="button" id="ph-centre">Centre on me</button>
+      </div>
+      <div class="ph-row">
+        <button type="button" id="ph-dest" disabled>Set as destination</button>
+        <button type="button" id="ph-voice"></button>
+        <button type="button" id="ph-menu">Menu</button>
+      </div>
+      <button type="button" id="ph-mode" class="ph-mode"></button>
+    </section>
+
     <dialog id="menu" aria-labelledby="menu-title">
       <form method="dialog" id="menu-form">
         <h1 id="menu-title">Audio Map Explorer</h1>
         <p class="lede">Explore real streets by sound. Choose a place and a vehicle, then press Start.</p>
+        <p><button type="button" id="phone-btn" class="primary">Phone mode</button> <span class="hint">On a phone: travel with your location and a touch map, or explore by touch. Works with VoiceOver and TalkBack.</span></p>
 
         <section aria-labelledby="where-h">
           <h2 id="where-h">Where</h2>

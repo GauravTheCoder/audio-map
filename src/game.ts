@@ -1,12 +1,12 @@
 // Game loop: vehicle physics, road awareness, announcements and keyboard commands.
 
-import { AreaMap, areaText, inRings, type Area } from './areas';
+import { AreaMap, areaText, inRings, type Area, type AreaSound } from './areas';
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
 import { bindingsOf, describeBinding, lookup, type ActionId, type Binding } from './keymap';
 import { MapView } from './mapview';
-import { HIGHWAYS, fetchPlaces, fetchRoads, fetchNamedAreas, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type NamedArea, type RawPlaces, type RawRoads } from './osm';
+import { HIGHWAYS, fetchPlaces, fetchRoads, fetchCountry, fetchNamedAreas, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type NamedArea, type RawPlaces, type RawRoads } from './osm';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
@@ -278,6 +278,10 @@ export class Game {
   onJump?: () => void;
   onNote?: () => void;
   onOsmNote?: (at: LatLon) => void;
+  /** units changed to suit the country (see autoUnits) */
+  onUnits?: (u: 'metric' | 'imperial') => void;
+  /** played on a touch screen: leave out keyboard hints */
+  touch = false;
   /** sees every key first; returning true consumes it */
   onKey?: (c: Command) => boolean;
   onSaveRoute?: () => void;
@@ -342,6 +346,7 @@ export class Game {
     }
 
     this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
+    void this.autoUnits(center);
     const stopHeartbeat = this.loadingHeartbeat();
     const ok = await this.load(true);
     stopHeartbeat();
@@ -364,9 +369,22 @@ export class Game {
     this.speech.say(
       `Ready. ${this.vehicle.name}. ${where}, facing ${compass8(this.heading)}.` +
         `${this.areaName ? ` ${this.areaName}.` : ''} ${world.ways.length} roads${world.places.length ? ` and ${world.places.length} places` : ''} loaded.` +
-        ` Hold up arrow to move. Press F1 for help.`,
+        (this.touch ? '' : ` Hold up arrow to move. Press F1 for help.`),
       'normal',
     );
+  }
+
+  /** Units by country, until the player picks them in settings: imperial in the United States, metric elsewhere. */
+  private async autoUnits(center: LatLon) {
+    if (this.settings.unitsChosen) return;
+    const cc = await fetchCountry(center);
+    if (!cc || this.settings.unitsChosen) return;
+    const units = IMPERIAL_COUNTRIES.has(cc) ? 'imperial' : 'metric';
+    if (units === this.settings.units) return;
+    this.settings.units = units;
+    saveSettings(this.settings);
+    this.details.clear();
+    this.onUnits?.(units);
   }
 
   /** Soft pulse and occasional spoken update so a long load is never silent. */
@@ -2958,9 +2976,9 @@ export class Game {
     void this.gridLook(true, '', ` ${street} Step ${this.gridStepText()}.`);
   }
 
-  /** The road or path the traveller stands on, if any. */
-  private gridRoad(): Area | null {
-    const hit = this.world?.nearestRoad(this.x, this.y, 30);
+  /** The road or path at (x, y), by default where the traveller stands, if any. */
+  private gridRoad(x = this.x, y = this.y): Area | null {
+    const hit = this.world?.nearestRoad(x, y, 30);
     if (!hit || hit.hit.dist > roadHalfWidth(hit.seg.way.type) + 1.5) return null;
     const w = hit.seg.way;
     return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
@@ -3002,18 +3020,9 @@ export class Game {
     if (this.grid !== g || g.req !== req) return;
     const hoodChanged = g.hood !== undefined && hood !== g.hood;
     g.hood = hood;
-    let text = '';
-    if (!onRoad) {
-      // the tiles' building and ground outlines carry no names: OpenStreetMap's own, when loaded
-      const osm = this.namedAt(this.x, this.y, area.sound === 'building');
-      // a named compound where the tiles have no ground at all is its "grounds", not "open ground"
-      if (osm) area = { ...area, name: osm.name, kind: osm.kind ?? (area.sound === 'open' ? 'grounds' : area.kind), number: undefined };
-      if (!area.name && area.number) {
-        const st = this.world?.nearestRoad(this.x, this.y, 30, (w) => w.named && !MINOR.has(w.type));
-        text = `${area.kind} number ${area.number}${st ? ` on ${st.seg.way.name}` : ''}`;
-      }
-    }
-    text ||= areaText(area);
+    const named = this.nameArea(area, onRoad, this.x, this.y);
+    area = named.area;
+    let text = named.text;
     // never the place's own name: leave the neighbourhood out when what is said already has it
     const hoodOk = !!hood && !text.toLowerCase().includes(hood.toLowerCase()) && !hood.toLowerCase().includes(text.toLowerCase());
     let now = '';
@@ -3021,6 +3030,104 @@ export class Game {
     else if (hoodOk && !ask && hoodChanged) now = ` Now near ${hood}.`;
     const loading = this.inLoadedArea(this.x, this.y) ? '' : ' Streets here are still loading.';
     this.speech.say(`${prefix} ${cap(text)}.${now}${suffix}${loading}`.trim(), 'high');
+  }
+
+  /** Give a tile area its best name: OpenStreetMap's own, else a house number; and the phrase to say. */
+  private nameArea(area: Area, onRoad: boolean, x: number, y: number): { area: Area; text: string } {
+    let text = '';
+    if (!onRoad) {
+      // the tiles' building and ground outlines carry no names: OpenStreetMap's own, when loaded
+      const osm = this.namedAt(x, y, area.sound === 'building');
+      // a named compound where the tiles have no ground at all is its "grounds", not "open ground"
+      if (osm) area = { ...area, name: osm.name, kind: osm.kind ?? (area.sound === 'open' ? 'grounds' : area.kind), number: undefined };
+      if (!area.name && area.number) {
+        const st = this.world?.nearestRoad(x, y, 30, (w) => w.named && !MINOR.has(w.type));
+        text = `${area.kind} number ${area.number}${st ? ` on ${st.seg.way.name}` : ''}`;
+      }
+    }
+    return { area, text: text || areaText(area) };
+  }
+
+  // ---------------- phone screen ----------------
+
+  /** Where the traveller is and faces, for the phone screen. */
+  get pose() {
+    return { x: this.x, y: this.y, heading: this.heading, live: !!this.live, ready: !!this.world, units: this.settings.units };
+  }
+
+  /** What is at (x, y): road, named building or ground, as a short phrase with its sound. Null before the map loads. */
+  async describeAt(x: number, y: number): Promise<{ text: string; sound: AreaSound; named: boolean } | null> {
+    if (!this.world) return null;
+    this.loadNamed();
+    let area = this.gridRoad(x, y);
+    const onRoad = !!area;
+    if (!area) {
+      try {
+        area = await this.areas.at(this.proj.toLatLon(x, y));
+      } catch {
+        return null;
+      }
+    }
+    const named = this.nameArea(area, onRoad, x, y);
+    return { text: named.text, sound: named.area.sound, named: onRoad || !!named.area.name || !!named.area.number };
+  }
+
+  /** The neighbourhood (x, y) is near, if any. */
+  async hoodAt(x: number, y: number): Promise<string | null> {
+    try {
+      return await this.areas.hood(this.proj.toLatLon(x, y));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Play the sound for a kind of ground (the phone grid, without a screen reader). */
+  areaCue(sound: AreaSound) {
+    this.audio.areaCue(sound);
+  }
+
+  /**
+   * The way to treat as "up" for a heading: a street's direction when one is within 30 degrees
+   * (the street here, or any leaving a nearby intersection), else the nearest of the 8 compass points.
+   */
+  streetUp(heading: number): { dir: number; street?: string } {
+    const w = this.world;
+    const options: { dir: number; street: string }[] = [];
+    const hit = w?.nearestRoad(this.x, this.y, 25);
+    if (hit) options.push({ dir: hit.dir, street: hit.seg.way.name }, { dir: normDeg(hit.dir + 180), street: hit.seg.way.name });
+    for (const n of w?.nodesNear(this.x, this.y, 15) ?? []) {
+      if (!w!.isIntersection(n, this.filter)) continue;
+      for (const e of n.edges) options.push({ dir: w!.edgeBearing(n, e), street: e.way.name });
+    }
+    let best: { dir: number; street: string; off: number } | null = null;
+    for (const o of options) {
+      const off = Math.abs(relAngle(heading, o.dir));
+      if (off <= 30 && (!best || off < best.off)) best = { ...o, off };
+    }
+    if (best) return { dir: Math.round(normDeg(best.dir)), street: best.street };
+    return { dir: (Math.round(normDeg(heading) / 45) % 8) * 45 };
+  }
+
+  /** Start live GPS from a tap (iOS asks for the compass only then); nothing if it is on. */
+  startLive() {
+    if (!this.live) void this.toggleLive();
+  }
+
+  get hasDestination(): boolean {
+    return !!this.dest;
+  }
+
+  /** The next turn-by-turn instruction as text, for the phone's directions panel; '' without a destination. */
+  directionsText(): string {
+    const dest = this.dest;
+    if (!dest) return '';
+    const u = this.settings.units;
+    const r = this.route;
+    if (!r) return `${dest.name}, ${fmtDistance(dist(this.x, this.y, dest.x, dest.y), u)} ${compass8(bearingTo(this.x, this.y, dest.x, dest.y))}. Follow the beacon.`;
+    const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m));
+    const m = steps[0];
+    if (!m) return r.partial ? 'Follow this road; more of the route loads as you go.' : `Arriving at ${dest.name}.`;
+    return `In ${fmtDistance(Math.max(0, m.d - this.routeProg), u)}, ${this.whichIntersection(m)}${this.stepText(m, dest.name)}.`;
   }
 
   /** Fetch OpenStreetMap's named buildings and grounds around here, in the background, once per ~500 m. */
@@ -3529,6 +3636,9 @@ function namedPoly(a: NamedArea, proj: Projection): NamedPoly {
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) size += (ring[j].x - ring[i].x) * (ring[j].y + ring[i].y);
   return { name: a.name, building: a.building, kind: a.kind, ring, minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys), size: Math.abs(size / 2) };
 }
+
+/** Countries (and US territories) whose everyday distances are in feet, yards and miles. */
+const IMPERIAL_COUNTRIES = new Set(['us', 'pr', 'gu', 'vi', 'as', 'mp', 'lr']);
 
 /** An angle rounded to 5 degrees, for speech. */
 function deg5(a: number): number {
