@@ -107,8 +107,12 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
   };
   return () => {
     on = !on;
-    if (on) rec.start();
-    else rec.stop();
+    try {
+      if (on) rec.start();
+      else rec.stop();
+    } catch {
+      // still stopping from the last toggle; onend restarts it while `on` is set
+    }
     onChange(on);
     say(`Voice commands ${on ? 'on' : 'off'}.`);
     return on;
