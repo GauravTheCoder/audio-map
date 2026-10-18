@@ -82,6 +82,8 @@ export interface OverpassEl {
   center?: { lat: number; lon: number };
   nodes?: number[];
   tags?: Record<string, string>;
+  /** with `out geom`: the way's outline */
+  geometry?: { lat: number; lon: number }[];
 }
 
 export async function fetchRoads(center: LatLon, radius: number, signal: AbortSignal, onRetry?: RetryNotice): Promise<RawRoads> {
@@ -226,6 +228,42 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     for (const p of doorOf.get(d.id) ?? []) (p.entrances ??= []).push({ lat: d.lat!, lon: d.lon!, tags: d.tags! });
   }
   return { places, signals, crossings, access };
+}
+
+/** A named building or piece of ground, with its outline (for grid mode, where the tiles carry no names). */
+export interface NamedArea {
+  name: string;
+  building: boolean;
+  /** what it is when it is not a building and is an amenity or leisure ground, e.g. "school" or "park" */
+  kind?: string;
+  ring: LatLon[];
+}
+
+/** Named buildings and grounds around `center`: what the map tiles leave unnamed. */
+export async function fetchNamedAreas(center: LatLon, radius: number, signal: AbortSignal): Promise<NamedArea[]> {
+  const q = `[out:json][timeout:60][bbox:${bbox(center, radius)}];
+(
+  way["building"]["name"];
+  way["landuse"]["name"];
+  way["leisure"]["name"];
+  way["amenity"]["name"];
+);
+out geom qt;`;
+  return parseNamedAreas(await overpass(q, signal));
+}
+
+export function parseNamedAreas(els: OverpassEl[]): NamedArea[] {
+  const out: NamedArea[] = [];
+  for (const el of els) {
+    const t = el.tags;
+    const g = el.geometry;
+    if (!t?.name || !g || g.length < 4) continue;
+    const building = !!t.building && t.building !== 'no';
+    // a school or park says what it is; a named landuse ("retail") keeps the tiles' wording
+    const v = t.amenity ?? t.leisure;
+    out.push({ name: t.name, building, kind: building ? undefined : v?.replace(/_/g, ' '), ring: g.map((p) => ({ lat: p.lat, lon: p.lon })) });
+  }
+  return out;
 }
 
 /** A bus or tram line calling at a stop, e.g. { ref: '5E', to: 'Lincoln Square' }. */
