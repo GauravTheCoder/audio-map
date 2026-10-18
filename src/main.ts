@@ -149,7 +149,9 @@ function select(p: Selected, announce = true) {
 function loadPlace(): Selected | null {
   try {
     const raw = localStorage.getItem(PLACE_KEY);
-    return raw ? (JSON.parse(raw) as Selected) : null;
+    const p = raw ? (JSON.parse(raw) as Selected) : null;
+    // stored data is untrusted: a place without coordinates would stop the map from loading
+    return p && typeof p.name === 'string' && Number.isFinite(p.lat) && Number.isFinite(p.lon) ? p : null;
   } catch {
     return null;
   }
