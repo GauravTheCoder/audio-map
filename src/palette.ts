@@ -59,6 +59,7 @@ export const ACTIONS: Action[] = [
   a('Delete note here', 'deleteNote'),
   a('Report a map error to OpenStreetMap', 'osmNote'),
   a('Copy share link', 'share'),
+  a('Save the route as a GPX file', 'exportRoute'),
   a('Trip summary', 'tripSummary'),
   a('Where am I', 'whereAmI'),
   a('Preview route', 'preview'),

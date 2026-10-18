@@ -984,6 +984,24 @@ describe('phone screen', () => {
     expect(game.directionsText()).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
   });
 
+  it('Shift Z saves the planned route as a GPX file', async () => {
+    const saved: { download?: string } = {};
+    vi.stubGlobal('document', { createElement: () => ({ click() {}, set download(v: string) { saved.download = v; } }) });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const { game, said } = setup();
+    game.run('Z', { shift: true });
+    expect(said.at(-1)).toBe('No route to save. Set a destination first.');
+    game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    game.run('Z', { shift: true });
+    expect(saved.download).toBe('Elm End.gpx');
+    expect(said.at(-1)).toBe('Route to Elm End saved as a GPX file.');
+    delete (globalThis as { document?: unknown }).document;
+    vi.mocked(URL.createObjectURL).mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore();
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
