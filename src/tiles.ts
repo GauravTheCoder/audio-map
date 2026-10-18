@@ -275,6 +275,11 @@ export async function fetchTileArea(center: LatLon, radius: number, signal: Abor
   for (const l of lines) for (let i = 0; i < l.pts.length; i++) degree.set(l.pts[i], (degree.get(l.pts[i]) ?? 0) + (i === 0 || i === l.pts.length - 1 ? 1 : 2));
   const splits = new Map<number, { t: number; id: number }[]>(); // segment index -> nodes to insert
   const remap = new Map<number, number>();
+  // a joined end can itself be joined onward later, so follow the chain (bounded, in case of a loop)
+  const resolve = (id: number) => {
+    for (let i = 0; i < 8 && remap.has(id); i++) id = remap.get(id)!;
+    return id;
+  };
   for (const l of lines) {
     for (const end of [l.pts[0], l.pts[l.pts.length - 1]]) {
       if (degree.get(end) !== 1 || remap.has(end)) continue;
@@ -345,7 +350,7 @@ export async function fetchTileArea(center: LatLon, radius: number, signal: Abor
   for (const l of lines as (RoadLine & { inserts?: Map<number, number[]> })[]) {
     const pts: number[] = [];
     l.pts.forEach((id, i) => {
-      pts.push(remap.get(id) ?? id);
+      pts.push(resolve(id));
       for (const extra of l.inserts?.get(i) ?? []) pts.push(extra);
     });
     l.pts = pts.filter((id, j) => j === 0 || id !== pts[j - 1]);
