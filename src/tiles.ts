@@ -21,8 +21,9 @@ const SNAP = 1.6;
 let tileUrl: Promise<string> | null = null;
 
 /** The current tile URL template (it changes when the map data is updated). */
-function template(signal?: AbortSignal): Promise<string> {
-  tileUrl ??= fetch(TILEJSON, { signal })
+// Shared by every caller, so it must not be tied to one caller's abort signal.
+function template(): Promise<string> {
+  tileUrl ??= fetch(TILEJSON, { signal: AbortSignal.timeout(15_000) })
     .then((r) => {
       if (!r.ok) throw new Error(`TileJSON ${r.status}`);
       return r.json();
@@ -48,7 +49,7 @@ function toLatLon(gx: number, gy: number): LatLon {
 
 /** One tile at zoom Z. */
 export async function fetchTile(tx: number, ty: number, signal?: AbortSignal): Promise<VectorTile> {
-  const url = await template(signal);
+  const url = await template();
   // tiles past the dateline wrap round to the other side of the map
   const wx = ((tx % 2 ** Z) + 2 ** Z) % 2 ** Z;
   const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(wx)).replace('{y}', String(ty)), { signal });
