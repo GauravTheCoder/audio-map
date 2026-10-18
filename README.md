@@ -24,6 +24,7 @@ Headphones recommended (place sounds are positioned in 3D around you).
 | `src/game.ts` | Game loop, physics, road assist, announcements, key commands |
 | `src/world.ts` | Road graph, junction grouping, spatial indexes, places |
 | `src/placeinfo.ts` | Which corner or side of the street a stop, entrance or crossing is on; stop letters and lines |
+| `src/phone.ts` | Phone mode: the touch grid, travel and explore modes |
 | `src/areas.ts` | Buildings, water, parks and land use under a point, for grid mode |
 | `src/osm.ts` | Overpass and Nominatim fetching, retry, cache |
 | `src/audio/audio.ts` | Vehicle engines, earcons, HRTF place cues, rumble strips |
@@ -32,6 +33,8 @@ Headphones recommended (place sounds are positioned in 3D around you).
 | `src/mapview.ts` | Visual map, trail, heading cone |
 | `src/profiles.ts` | Sound profiles: which places and junctions are heard for each vehicle |
 | `src/favorites.ts`, `src/notes.ts` | Saved places and spot notes, kept in the browser |
+
+On a phone, **Phone mode** (top of the start menu) gives a touch map that works with VoiceOver and TalkBack: a 7 × 7 grid of squares read as you touch them. **Travel** (the default) follows your real location with up the street you face, directions at the top and the beacon; **Explore** is north up and pans by buttons. Units follow the country (imperial in the US) until you choose them in settings. Location needs HTTPS.
 
 Press **F3** for grid mode: north is up, the arrow keys step across the map, and each kind of ground (road, building, park, water, land use) has its own sound. Areas come from the same vector tiles (`src/areas.ts`).
 

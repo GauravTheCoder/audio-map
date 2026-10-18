@@ -18,6 +18,7 @@ import { setupRebind } from './rebind';
 import { setupTouch } from './touch';
 import { setupVoice } from './voice';
 import { postOsmNote } from './osmnotes';
+import { Phone } from './phone';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -99,7 +100,7 @@ function bindSettings() {
   for (const el of [places, side, extras]) el.addEventListener('change', custom);
   const units = $<HTMLSelectElement>('units');
   units.value = settings.units;
-  units.addEventListener('change', () => update({ units: units.value as Settings['units'] }));
+  units.addEventListener('change', () => update({ units: units.value as Settings['units'], unitsChosen: true }));
 }
 
 function update(patch: Partial<Settings>) {
@@ -257,12 +258,84 @@ function closeMenu() {
   if (menu.open) menu.close();
   if (game) {
     game.resume();
-    game.focus(stage);
+    refocus();
   }
 }
 
-function startGame(learn = false) {
+/** Back to where the player was: the phone screen, or the explorer. */
+function refocus() {
+  if (phone.active) $('ph-dirs').focus();
+  else game?.focus(stage);
+}
+
+// ---------- phone mode ----------
+
+let wakeLock: { release(): Promise<void> } | null = null;
+async function keepAwake() {
+  try {
+    wakeLock = (await (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock?.request('screen')) ?? null;
+  } catch {
+    wakeLock = null; // not allowed (battery saver, or not supported): the screen may lock
+  }
+}
+// the browser drops the lock when the page is hidden; take it again on return
+document.addEventListener('visibilitychange', () => {
+  if (wakeLock && document.visibilityState === 'visible' && phone.active) void keepAwake();
+});
+
+const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
+const phone = new Phone($('phone'), () => game, {
+  openSearch: () => openNav('navigate'),
+  openMenu: () => openMenu('main'),
+  toggleVoice: () => {
+    update({ speechMode: settings.speechMode === 'voice' ? 'screenreader' : 'voice' });
+    speech.say(settings.speechMode === 'voice' ? 'Built-in voice.' : 'Screen reader speech.', 'high');
+    return voiceLabel();
+  },
+  voiceLabel,
+  guide: () => {
+    if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
+    void keepAwake();
+  },
+});
+
+/** Phone mode: find where you are, then the touch map in travel mode. Without a location, explore mode. */
+function startPhone() {
   stopPreview(speech);
+  const g = ensureGame();
+  g.touch = true;
+  if (menu.open) menu.close();
+  $('app').inert = true; // the keyboard explorer underneath stays out of the screen reader's way
+  phone.show('travel');
+  const explore = (why: string) => {
+    speech.say(`${why} Explore mode works anywhere; travel mode needs your location.`, 'high');
+    if (!g.isStarted) void g.start(selected, selected.name);
+    phone.setMode('explore', false);
+  };
+  if (!navigator.geolocation) return explore('Location is not available in this browser.');
+  speech.say('Phone mode. Finding your location.', 'high');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const here = { name: 'Your location', lat: pos.coords.latitude, lon: pos.coords.longitude };
+      select(here, false);
+      void g.start(here, 'your location');
+    },
+    () => explore('Could not get your location; location permission may be off.'),
+    { enableHighAccuracy: true, timeout: 15000 },
+  );
+}
+
+function leavePhone() {
+  phone.hide();
+  $('app').inert = false;
+  void wakeLock?.release().catch(() => {});
+  wakeLock = null;
+}
+
+$('phone-btn').addEventListener('click', startPhone);
+
+/** The game, created on first use (on a user gesture, so the browser allows sound). */
+function ensureGame(): Game {
   if (!game) {
     const audio = new AudioEngine(settings.volume, settings.soundTheme); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
@@ -296,7 +369,16 @@ function startGame(learn = false) {
       dest.textContent = h.destination ? `→ ${h.destination}` : '';
       $('hud-status').textContent = h.status;
     };
+    game.onUnits = (u) => ($<HTMLSelectElement>('units').value = u);
   }
+  return game;
+}
+
+function startGame(learn = false) {
+  stopPreview(speech);
+  const game = ensureGame();
+  leavePhone();
+  game.touch = false;
   if (menu.open) menu.close();
   game.focus(stage);
   const to = shared?.to;
@@ -346,7 +428,7 @@ function closeNav() {
   if (nav.open) nav.close();
   if (game) {
     game.resume();
-    game.focus(stage);
+    refocus();
   }
 }
 

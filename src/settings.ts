@@ -17,6 +17,8 @@ export interface Settings {
   speechMode: SpeechMode;
   voiceRate: number;
   units: Units;
+  /** the player picked the units; until then they follow the country (imperial in the US) */
+  unitsChosen: boolean;
   announcePlaces: boolean;
   announceHazards: boolean;
   announceStreets: boolean;
@@ -48,6 +50,7 @@ const DEFAULTS: Settings = {
   speechMode: 'screenreader',
   voiceRate: 1.3,
   units: 'metric',
+  unitsChosen: false,
   announcePlaces: true,
   announceHazards: true,
   announceStreets: true,
