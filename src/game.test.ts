@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Game } from './game';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
-import { World } from './world';
-import { fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode } from './osm';
+import { World, type Place } from './world';
+import { fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode } from './osm';
 import { fetchTileArea } from './tiles';
 import type { RawPlaces, RawRoads } from './osm';
 
 vi.mock('./onlineRouter', () => ({ hasOnlineRouting: () => false, fetchOnlineRoute: vi.fn() }));
-vi.mock('./osm', async (orig) => ({ ...(await orig<typeof import('./osm')>()), fetchRoads: vi.fn(), fetchPlaces: vi.fn(), fetchRoadsBox: vi.fn(), reverseGeocode: vi.fn() }));
+vi.mock('./osm', async (orig) => ({ ...(await orig<typeof import('./osm')>()), fetchRoads: vi.fn(), fetchPlaces: vi.fn(), fetchRoadsBox: vi.fn(), reverseGeocode: vi.fn(), fetchStopRoutes: vi.fn() }));
 vi.mock('./tiles', () => ({ fetchTileArea: vi.fn() }));
 vi.stubGlobal('requestAnimationFrame', () => 0);
 
@@ -72,6 +72,7 @@ beforeEach(() => {
   vi.mocked(fetchPlaces).mockReset().mockResolvedValue({ places: [], signals: new Set<number>() });
   vi.mocked(reverseGeocode).mockReset().mockResolvedValue('Testville');
   vi.mocked(fetchTileArea).mockReset().mockRejectedValue(new Error('no tiles'));
+  vi.mocked(fetchStopRoutes).mockReset().mockResolvedValue([]);
 });
 
 describe('commands', () => {
@@ -465,5 +466,166 @@ describe('roundabouts', () => {
       g.updateRing();
     }
     expect(g.ring).toBeNull();
+  });
+});
+
+describe('grid mode', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  function gridSetup() {
+    const h = setup();
+    const at = vi.fn(async () => ({ key: 'park1', kind: 'park', name: 'Oak Park', sound: 'green' }));
+    h.g.areas = { at, has: () => true };
+    h.g.loadCenter = { x: 0, y: 0 };
+    return { ...h, at };
+  }
+
+  it('F3 turns it on and says what is here; F3 again turns it off', async () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    await flush();
+    expect(g.grid).not.toBeNull();
+    expect(said.at(-1)).toMatch(/^Grid mode, up is north\. .*Oak Street\.$/);
+    game.run('F3');
+    expect(g.grid).toBeNull();
+    expect(said.at(-1)).toMatch(/^Grid mode off/);
+  });
+
+  it('arrows step by compass direction, whatever the heading', async () => {
+    const { game, g } = gridSetup();
+    g.heading = 90;
+    game.run('F3');
+    game.run('ArrowUp');
+    expect(g.x).toBeCloseTo(0);
+    expect(g.y).toBeCloseTo(60);
+    game.run('ArrowRight');
+    expect(g.x).toBeCloseTo(10);
+    game.run('ArrowDown');
+    game.run('ArrowLeft');
+    expect(g.x).toBeCloseTo(0);
+    expect(g.y).toBeCloseTo(50);
+    expect(g.speed).toBe(0);
+  });
+
+  it('speaks an area only on entering it; Space repeats it', async () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    await flush();
+    game.run('ArrowRight'); // off Oak Street into the park
+    await flush();
+    expect(said.at(-1)).toBe('Oak Park.');
+    const n = said.length;
+    game.run('ArrowRight');
+    await flush();
+    expect(said.length).toBe(n);
+    game.run(' ');
+    await flush();
+    expect(said.at(-1)).toBe('Oak Park.');
+    expect(g.grid.key).toBe('park1');
+  });
+
+  it('minus and equals change the step between 1 and 1000', () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    game.run('=');
+    expect(said.at(-1)).toBe('Step 100 metres.');
+    game.run('=');
+    game.run('=');
+    expect(said.at(-1)).toBe('Largest step, 1000 metres.');
+    for (let i = 0; i < 4; i++) game.run('-');
+    expect(said.at(-1)).toBe('Smallest step, 1 metre.');
+    game.run('ArrowUp');
+    expect(g.y).toBeCloseTo(51);
+  });
+
+  it('uses yards with imperial units', () => {
+    const { game, said, g } = gridSetup();
+    g.settings.units = 'imperial';
+    game.run('F3');
+    game.run('=');
+    expect(said.at(-1)).toBe('Step 100 yards.');
+    game.run('ArrowUp');
+    expect(g.y).toBeCloseTo(50 + 91.44);
+  });
+
+  it('cannot start while live GPS is on', () => {
+    const { game, said, g } = gridSetup();
+    g.live = {};
+    game.run('F3');
+    expect(g.grid).toBeNull();
+    expect(said.at(-1)).toMatch(/Live GPS is on/);
+  });
+});
+
+describe('stops, entrances and crossings', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const at = (x: number, y: number) => ll(x, y);
+  const destSaid = (said: string[]) => [...said].reverse().find((t) => t.startsWith('Destination'));
+  // Oak Street runs north at x = 0 and Elm Street east at y = 200 (see rawRoads)
+  function withStops() {
+    const h = setup();
+    const p = (id: string, x: number, y: number, tags: Record<string, string>) => ({ id, ...at(x, y), tags });
+    h.g.world.addPlaces({
+      signals: new Set(),
+      places: [
+        p('n101', -8, 192, { highway: 'bus_stop', name: 'Oak & Elm' }),
+        p('n102', 30, 200, { highway: 'bus_stop', name: 'Elm Street Stop' }),
+        p('n103', 8, 215, { highway: 'bus_stop', name: 'Oak & Elm', local_ref: 'K' }),
+      ],
+    });
+    return h;
+  }
+
+  it('X keeps the stops of one intersection together and says which corner', () => {
+    const { game, said, g } = withStops();
+    game.run('x');
+    expect(g.dest.placeId).toBe('n101');
+    expect(destSaid(said)).toMatch(/^Destination Oak & Elm, south-west corner of (Oak Street and Elm Street|Elm Street and Oak Street), buses probably head/);
+    game.run('x');
+    expect(g.dest.placeId).toBe('n103'); // the other Oak & Elm stop, though Elm Street Stop is nearer
+    expect(destSaid(said)).toMatch(/north-east corner .*stop K/);
+    game.run('x');
+    expect(g.dest.placeId).toBe('n102');
+  });
+
+  it('looks up the lines at a chosen stop and repeats them with G', async () => {
+    vi.mocked(fetchStopRoutes).mockResolvedValue([{ ref: '5E', to: 'Lincoln Square' }]);
+    const { game, said } = withStops();
+    game.run('x');
+    await flush();
+    expect(fetchStopRoutes).toHaveBeenCalledWith(101);
+    expect(said).toContain('Lines here: 5E to Lincoln Square.');
+    game.run('g');
+    expect(said.at(-1)).toMatch(/Lines here: 5E to Lincoln Square\.$/);
+  });
+
+  it('guides to the main door of a place mapped as a building', () => {
+    const { game, said, g } = setup();
+    g.world.addPlaces({
+      signals: new Set(),
+      places: [
+        {
+          id: 'w9',
+          ...at(40, 100),
+          tags: { amenity: 'library', name: 'Oak Library' },
+          entrances: [
+            { ...at(60, 110), tags: { entrance: 'yes' } },
+            { ...at(10, 100), tags: { entrance: 'main', wheelchair: 'yes' } },
+          ],
+        },
+      ],
+    });
+    const lib = g.world.places.find((p: Place) => p.name === 'Oak Library');
+    game.setTarget(g.targetFor(lib));
+    expect(g.dest.x).toBeCloseTo(10, 0);
+    expect(destSaid(said)).toMatch(/^Destination Oak Library, main entrance on Oak Street, wheelchair accessible,/);
+  });
+
+  it('names the street a crossing goes over and what it offers', () => {
+    const { said, g } = setup();
+    g.world.addPlaces({ signals: new Set(), places: [], crossings: [{ ...at(0, 180), text: 'Crossing with signals', extras: ['audible signal', 'push button'] }] });
+    g.y = 160;
+    g.speed = 1;
+    g.checkHazards();
+    expect(said.at(-1)).toBe('Crossing with signals ahead, 20 metres, over Oak Street, south of Elm Street. Audible signal, push button');
   });
 });

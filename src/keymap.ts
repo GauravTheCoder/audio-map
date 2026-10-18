@@ -30,6 +30,7 @@ export const DEFAULT_KEYS = {
   whatsAround: [k('w')],
   conditions: [k('w', true)],
   sonar: [k(' ')],
+  toggleGrid: [k('F3')],
   nextPlace: [k('Tab')],
   prevPlace: [k('Tab', true)],
   setDestination: [k('Enter')],
