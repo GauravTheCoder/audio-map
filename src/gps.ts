@@ -69,6 +69,16 @@ export function snapRadius(acc: number): number {
   return acc <= SNAP_MAX ? Math.max(acc, 10) : 0;
 }
 
+/** Speed (m/s) and course from two timed positions, for devices that report neither; null when too close in time. */
+export function motionBetween(a: { lat: number; lon: number; t: number }, b: { lat: number; lon: number; t: number }): { speed: number; heading: number } | null {
+  const dt = (b.t - a.t) / 1000;
+  if (dt < 0.5) return null;
+  const R = 6_371_000;
+  const dx = ((b.lon - a.lon) * Math.PI) / 180 * R * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  const dy = ((b.lat - a.lat) * Math.PI) / 180 * R;
+  return { speed: Math.hypot(dx, dy) / dt, heading: normDeg((Math.atan2(dx, dy) * 180) / Math.PI) };
+}
+
 /** Move angle `from` a fraction k of the way to `to`, the short way round north. */
 export function easeAngle(from: number, to: number, k: number): number {
   return normDeg(from + relAngle(from, to) * Math.max(0, Math.min(1, k)));
@@ -78,6 +88,8 @@ export class LiveGps {
   compass: number | null = null;
   private watch: number | null = null;
   private lost = false;
+  private stopped = false;
+  private prev: { lat: number; lon: number; t: number } | null = null;
 
   constructor(
     private onFix: (f: GpsFix) => void,
@@ -99,7 +111,10 @@ export class LiveGps {
     const DOE = (window as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
     // a refused compass is not fatal: GPS course still works while moving
     const compassOk = DOE?.requestPermission ? DOE.requestPermission().then((r) => r === 'granted', () => false) : Promise.resolve(true);
-    if (await compassOk) {
+    const granted = await compassOk;
+    // turned off while the permission prompt was open
+    if (this.stopped) return false;
+    if (granted) {
       window.addEventListener('deviceorientationabsolute', this.onOrientation);
       window.addEventListener('deviceorientation', this.onOrientation);
     }
@@ -110,7 +125,14 @@ export class LiveGps {
           this.onRecovered();
         }
         const c = p.coords;
-        this.onFix({ lat: c.latitude, lon: c.longitude, speed: c.speed ?? 0, heading: c.heading ?? null, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null });
+        const here = { lat: c.latitude, lon: c.longitude, t: p.timestamp };
+        // some devices report no speed or course; work them out from the last fix
+        const course = c.heading === null || Number.isNaN(c.heading) ? null : c.heading;
+        const m = c.speed === null || course === null ? this.prev && motionBetween(this.prev, here) : null;
+        this.prev = here;
+        const speed = c.speed ?? m?.speed ?? 0;
+        const heading = course ?? m?.heading ?? null;
+        this.onFix({ lat: c.latitude, lon: c.longitude, speed, heading, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null });
       },
       (err) => {
         if (err.code === err.PERMISSION_DENIED) return this.onProblem('denied');
@@ -125,6 +147,7 @@ export class LiveGps {
   }
 
   stop() {
+    this.stopped = true;
     if (this.watch !== null) navigator.geolocation.clearWatch(this.watch);
     this.watch = null;
     window.removeEventListener('deviceorientationabsolute', this.onOrientation);

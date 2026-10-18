@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compassHeading, easeAngle, fuse, pickHeading, snapRadius } from './gps';
+import { compassHeading, easeAngle, fuse, motionBetween, pickHeading, snapRadius } from './gps';
 
 describe('compassHeading', () => {
   it('uses the iOS compass heading directly', () => {
@@ -62,5 +62,18 @@ describe('snapRadius', () => {
     expect(snapRadius(5)).toBe(10);
     expect(snapRadius(25)).toBe(25);
     expect(snapRadius(31)).toBe(0);
+  });
+});
+
+describe('motionBetween', () => {
+  it('gives speed and course from two fixes', () => {
+    // about 111 m north in 10 s
+    const m = motionBetween({ lat: 51, lon: 0, t: 0 }, { lat: 51.001, lon: 0, t: 10_000 })!;
+    expect(m.speed).toBeCloseTo(11.1, 0);
+    expect(m.heading).toBeCloseTo(0, 0);
+    expect(motionBetween({ lat: 51, lon: 0, t: 0 }, { lat: 51, lon: 0.001, t: 10_000 })!.heading).toBeCloseTo(90, 0);
+  });
+  it('is null when the fixes are too close in time', () => {
+    expect(motionBetween({ lat: 51, lon: 0, t: 0 }, { lat: 51.001, lon: 0, t: 100 })).toBeNull();
   });
 });

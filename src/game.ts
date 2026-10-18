@@ -265,6 +265,8 @@ export class Game {
   // ---------------- lifecycle ----------------
 
   async start(center: LatLon, placeName?: string) {
+    // going somewhere else by search or jump ends live GPS, which would only pull you back
+    const liveOff = !this.restartingForGps && !!this.live;
     if (!this.restartingForGps) this.stopLive();
     this.loadAbort?.abort();
     this.proj = new Projection(center);
@@ -300,7 +302,7 @@ export class Game {
       requestAnimationFrame(this.frame);
     }
 
-    this.speech.say(`Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
+    this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
     const stopHeartbeat = this.loadingHeartbeat();
     const ok = await this.load(true);
     stopHeartbeat();
@@ -2142,7 +2144,7 @@ export class Game {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
-        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
+        'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
@@ -2296,6 +2298,7 @@ export class Game {
     const u = this.settings.units;
     if (this.vehicle.id === 'helicopter') return this.speech.say('Moving by intersection needs a road; not in the helicopter.', 'high');
     if (this.ring) return this.speech.say('In a roundabout. N gives the next exit.', 'high');
+    if (this.live && this.liveFix) return this.speech.say('Live GPS is moving you. Shift L turns it off.', 'high');
     const w = this.world!;
     const back = dir < 0;
     const s = this.roadStart(20, this.filter, back ? normDeg(this.heading + 180) : this.heading);
@@ -2398,7 +2401,8 @@ export class Game {
   }
 
   private async onGpsFix(live: LiveGps, f: GpsFix) {
-    if (this.live !== live) return;
+    // while the map restarts around the first fix, later fixes would mix the old and new projections
+    if (this.live !== live || this.restartingForGps) return;
     const first = !this.liveFix;
     const acc = f.accuracy ?? DEFAULT_ACCURACY;
     const poor = acc > POOR_ACCURACY;
@@ -2411,8 +2415,7 @@ export class Game {
     const p0 = this.proj.toXY(f.lat, f.lon);
     this.gpsEst = fuse(this.gpsEst, p0.x, p0.y, acc, performance.now() / 1000, f.speed);
     if (!first) return;
-    const p = this.proj.toXY(f.lat, f.lon);
-    if (Math.hypot(p.x, p.y) > 20_000) {
+    if (Math.hypot(p0.x, p0.y) > 20_000) {
       // projection distortion grows with distance, so begin afresh around the real position
       this.restartingForGps = true;
       try {
