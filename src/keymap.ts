@@ -72,11 +72,12 @@ export const ACTION_IDS = Object.keys(DEFAULT_KEYS) as ActionId[];
 /** the menu and help keys stay put so a mistake can always be undone */
 export const REBINDABLE = ACTION_IDS.filter((id) => id !== 'menu' && id !== 'help');
 
-/** Escape, F1 and F2 open the menu, help and palette; arrows and slash are handled before actions; the rest belong to the browser and screen readers. */
+/** Escape and F1 open the menu and help, Control Shift P the palette; arrows and slash are handled before actions; the rest belong to the browser and screen readers. */
 const RESERVED = ['Escape', 'F1', 'F2', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', '/', 'Shift', 'Alt', 'Meta', 'Insert', 'CapsLock'];
 const BROWSER_CTRL = ['r', 'l', 't', 'w', 'n'];
 
-export const isReserved = (b: Binding) => RESERVED.includes(b.key) || (!!b.ctrl && BROWSER_CTRL.includes(b.key));
+export const isReserved = (b: Binding) =>
+  RESERVED.includes(b.key) || (!!b.ctrl && BROWSER_CTRL.includes(b.key)) || (!!b.ctrl && !!b.shift && b.key.toLowerCase() === 'p');
 
 export function bindingsOf(id: ActionId, o: KeyOverrides): Binding[] {
   return o[id] ? [o[id]!] : DEFAULT_KEYS[id];

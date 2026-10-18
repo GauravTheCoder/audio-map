@@ -523,7 +523,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// F2 works everywhere: key events from the explorer bubble up to the document too
+// Control Shift P works everywhere: key events from the explorer bubble up to the document too
 const openPalette = setupPalette(
   () => settings.keyBindings,
   () => {
@@ -555,12 +555,18 @@ const openRebind = setupRebind(
     game?.focus(stage);
   },
 );
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'F2') {
-    e.preventDefault();
-    openPalette();
-  }
-});
+// capture phase, so the game never sees the P
+document.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
+      e.preventDefault();
+      e.stopPropagation();
+      openPalette();
+    }
+  },
+  true,
+);
 
 setupTouch(stage, () => game);
 
