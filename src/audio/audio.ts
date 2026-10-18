@@ -111,8 +111,8 @@ export class AudioEngine {
   }
 
   /** Lower continuous sounds while speech plays (built-in voice only). */
-  duck(on: boolean) {
-    this.bed.gain.setTargetAtTime(on ? 0.45 : 1, this.now, 0.08);
+  duck(on: boolean, depth = 0.45) {
+    this.bed.gain.setTargetAtTime(on ? depth : 1, this.now, 0.08);
   }
 
   setVehicle(id: VehicleId) {
@@ -274,6 +274,11 @@ export class AudioEngine {
       default:
         this.tone(f, { when, dur: 0.14, dest, type: 'triangle' });
     }
+  }
+
+  /** Calibration tone through the same panner as place cues. rel: degrees clockwise from ahead. */
+  testTone(rel: number) {
+    this.tone(660, { dur: 0.6, dest: this.spatial(rel, 0.3), level: 0.3 });
   }
 
   /**

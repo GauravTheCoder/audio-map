@@ -1,6 +1,7 @@
 // Game loop: vehicle physics, road awareness, announcements and keyboard commands.
 
 import { AudioEngine } from './audio/audio';
+import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
@@ -248,7 +249,10 @@ export class Game {
     this.vehicle = VEHICLES[settings.vehicle];
     this.input.onCommand = (c) => this.command(c);
     this.input.onKeyUp = (code) => this.keyUp(code);
-    this.speech.onSpeakingChange = (s) => this.audio.duck(s);
+    this.speech.onSpeakingChange = (s) => {
+      this.speaking = s;
+      this.audio.duck(s, duckGain(this.speed));
+    };
   }
 
   // ---------------- lifecycle ----------------
@@ -494,6 +498,7 @@ export class Game {
 
   pause() {
     this.paused = true;
+    this.calibrationTimers.forEach(clearTimeout);
     this.speed = 0;
     this.audio.update({ speed: 0, maxSpeed: 1, throttle: 0, surface: 'paved', tunnel: false }, STEP);
     this.audio.setRumble(0, 0, 10);
@@ -1354,7 +1359,7 @@ export class Game {
   private checkPlaces() {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
     // faster vehicles pass places quicker, so leave longer between cues
-    if (this.clock - this.lastPlaceSpoken < 1.2 + Math.min(2.8, this.speed / 6)) return;
+    if (this.clock - this.lastPlaceSpoken < placeSpeechGap(this.speed)) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
       if (!placeWanted(this.settings, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
@@ -1364,8 +1369,9 @@ export class Game {
       this.announcedPlaces.set(place.id, this.clock);
       // nearer is louder and clearer; landmarks stand out over everyday places
       const far = Math.min(1, d / this.vehicle.passRadius);
-      this.audio.placeCue(place.group, rel, (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1), undefined, far);
-      this.speech.say(`${place.name}, ${place.category}, ${sideWord(rel)}${d > 15 ? `, ${fmtDistance(d, this.settings.units)}` : ''}`, 'low');
+      const level = (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1) * cueLevelScale(this.speed, this.speaking);
+      this.audio.placeCue(place.group, rel, level, undefined, far);
+      this.speech.say(placeSpeech(place.name, place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
       this.lastPlaceSpoken = this.clock;
       break;
     }
@@ -1937,6 +1943,7 @@ export class Game {
       case 'k':
         return this.help();
       case 'h':
+        if (c.shift) return this.calibrate();
         return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
       case 's':
         return this.speech.say(
@@ -2079,6 +2086,21 @@ export class Game {
     }
   }
 
+  private speaking = false;
+  private calibrationTimers: number[] = [];
+
+  /** Says "left", plays a tone there, then the same for right and ahead. */
+  private calibrate() {
+    this.calibrationTimers.forEach(clearTimeout);
+    this.speech.say('Headphone check. You should hear each tone from the side named.', 'high');
+    // timed for the default rate; a slower built-in voice needs longer so "Left" does not cut off the intro
+    const slow = this.settings.speechMode === 'voice' ? Math.max(1, 1.3 / this.settings.voiceRate) : 1;
+    this.calibrationTimers = ([['Left', -90], ['Right', 90], ['Ahead', 0]] as const).flatMap(([word, rel], i) => [
+      window.setTimeout(() => this.speech.say(word, 'high'), (4000 + i * 2200) * slow),
+      window.setTimeout(() => this.audio.testTone(rel), (4000 + i * 2200) * slow + 800),
+    ]);
+  }
+
   private help() {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
@@ -2086,7 +2108,7 @@ export class Game {
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
-        'Page up and down change volume. F searches for a location. Escape opens the menu.',
+        'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
   }
