@@ -56,6 +56,7 @@ export const ACTIONS: Action[] = [
   a('Filter kind of place', 'filter'),
   a('Leave a spoken note', 'note'),
   a('Delete note here', 'deleteNote'),
+  a('Report a map error to OpenStreetMap', 'osmNote'),
   a('Copy share link', 'share'),
   a('Trip summary', 'tripSummary'),
   a('Where am I', 'whereAmI'),

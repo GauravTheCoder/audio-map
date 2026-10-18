@@ -38,6 +38,7 @@ export const DEFAULT_KEYS = {
   filter: [k('c')],
   note: [k('v')],
   deleteNote: [k('v', true)],
+  osmNote: [k('v', false, true)],
   share: [k('z')],
   tripSummary: [k('u')],
   whereAmI: [k('e')],

@@ -17,6 +17,7 @@ import { REBIND_NAME, setupPalette } from './palette';
 import { setupRebind } from './rebind';
 import { setupTouch } from './touch';
 import { setupVoice } from './voice';
+import { postOsmNote } from './osmnotes';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -267,6 +268,14 @@ function startGame(learn = false) {
       noteDlg.showModal();
       $('note-text').focus();
     };
+    game.onOsmNote = (at) => {
+      game?.pause();
+      osmAt = at;
+      showOsmStep(false);
+      $<HTMLInputElement>('osmnote-text').value = '';
+      osmDlg.showModal();
+      $('osmnote-text').focus();
+    };
     tutorial = new Tutorial(speech, audio, () => game!.snap);
     game.onKey = (c) => tutorial!.onKey(c);
     bindRoutes(game, stage);
@@ -433,6 +442,58 @@ $('note-form').addEventListener('submit', (e) => {
 noteDlg.addEventListener('cancel', (e) => {
   e.preventDefault();
   closeNote();
+});
+
+// ---------- report to OpenStreetMap ----------
+
+const osmDlg = $<HTMLDialogElement>('osmnote');
+let osmAt: LatLon | null = null;
+let osmSending = false;
+
+function closeOsm() {
+  if (osmDlg.open) osmDlg.close();
+  if (game) {
+    game.resume();
+    game.focus(stage);
+  }
+}
+
+function showOsmStep(confirm: boolean) {
+  $('osmnote-edit').hidden = confirm;
+  $('osmnote-confirm').hidden = !confirm;
+}
+
+// Public and irreversible, so sending takes a second, spoken and visible step.
+$('osmnote-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $<HTMLInputElement>('osmnote-text').value.trim();
+  if (!text || !osmAt || osmSending) return;
+  if (!$('osmnote-edit').hidden) {
+    const msg = `You are about to send this note publicly to OpenStreetMap: ${text}. Choose Send publicly, or Back to change it. Escape cancels.`;
+    $('osmnote-summary').textContent = msg;
+    showOsmStep(true);
+    $('osmnote-send').focus();
+    speech.say(msg, 'high');
+    return;
+  }
+  osmSending = true;
+  try {
+    await postOsmNote(osmAt, text);
+    speech.say('Note sent to OpenStreetMap. Thank you.', 'high');
+  } catch {
+    speech.say('Could not send the note to OpenStreetMap. Check your connection and try again.', 'high');
+  } finally {
+    osmSending = false;
+    closeOsm();
+  }
+});
+$('osmnote-back').addEventListener('click', () => {
+  showOsmStep(false);
+  $('osmnote-text').focus();
+});
+osmDlg.addEventListener('cancel', (e) => {
+  e.preventDefault();
+  closeOsm();
 });
 
 const manage = initManage({
