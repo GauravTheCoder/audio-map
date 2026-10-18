@@ -3,6 +3,7 @@
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
+import { lookup } from './keymap';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { fetchTileArea } from './tiles';
@@ -1971,137 +1972,149 @@ export class Game {
     }
     if (c.repeat && c.code !== 'Tab') return;
 
-    switch (c.key.length === 1 ? c.key.toLowerCase() : c.key) {
-      case 'Control':
+    const action = lookup(c, this.settings.keyBindings);
+    if (!action) return false;
+    switch (action) {
+      case 'stopSpeech':
         this.speech.stop();
         return;
-      case 'Escape':
+      case 'menu':
         this.onMenu?.('main');
         return;
-      case 'F1':
-      case 'k':
+      case 'help':
         return this.help();
-      case 'h':
-        if (c.shift) return this.calibrate();
+      case 'calibrate':
+        return this.calibrate();
+      case 'heading':
         return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
-      case 's':
+      case 'speed':
         return this.speech.say(
           this.speed < 0.1 ? 'Stopped.' : `${fmtSpeed(this.speed, u)}.`,
           'high',
         );
-      case 'l':
-        return c.shift ? void this.toggleLive() : this.speech.say(this.locationText(), 'high');
-      case 'n': {
+      case 'toggleLive':
+        return void this.toggleLive();
+      case 'location':
+        return this.speech.say(this.locationText(), 'high');
+      case 'nextIntersection':
+      case 'prevIntersection': {
+        const back = action === 'prevIntersection';
         // pressed twice quickly: move there
         const now = performance.now();
-        const double = now - this.lastNPress < 400 && this.lastNShift === c.shift;
+        const double = now - this.lastNPress < 400 && this.lastNShift === back;
         this.lastNPress = double ? -Infinity : now; // a third quick press starts over
-        this.lastNShift = c.shift;
-        if (double) return this.jump(c.shift ? -1 : 1);
-        return c.shift ? this.previousIntersection() : this.nextIntersection();
+        this.lastNShift = back;
+        if (double) return this.jump(back ? -1 : 1);
+        return back ? this.previousIntersection() : this.nextIntersection();
       }
-      case '.':
+      case 'stepForward':
         return this.stepIntersection(1);
-      case ',':
-        if (c.ctrl) return this.onMenu?.('settings');
+      case 'settings':
+        return this.onMenu?.('settings');
+      case 'stepBack':
         return this.stepIntersection(-1);
-      case 'b':
-        if (c.shift) {
-          this.settings.proximityBeeps = !this.settings.proximityBeeps;
-          saveSettings(this.settings);
-          return this.speech.say(`Intersection beeps ${this.settings.proximityBeeps ? 'on' : 'off'}.`, 'high');
-        }
+      case 'proximityBeeps':
+        this.settings.proximityBeeps = !this.settings.proximityBeeps;
+        saveSettings(this.settings);
+        return this.speech.say(`Intersection beeps ${this.settings.proximityBeeps ? 'on' : 'off'}.`, 'high');
+      case 'beacon':
         this.settings.beaconSound = !this.settings.beaconSound;
         saveSettings(this.settings);
         return this.speech.say(`Beacon sound ${this.settings.beaconSound ? 'on' : 'off'}.`, 'high');
-      case 't':
+      case 'turnByTurn':
         return this.toggleTurnByTurn();
-      case 'i':
+      case 'instructions':
         return this.instructions();
-      case 'w': {
-        if (!c.shift) return this.whatsAround();
+      case 'whatsAround':
+        return this.whatsAround();
+      case 'conditions': {
         const at = this.position;
         if (!at) return;
         this.speech.say('Checking conditions.', 'low');
         void conditionsReport(at, this.settings.units).then((t) => this.speech.say(t, 'high'));
         return;
       }
-      case ' ':
+      case 'sonar':
         return this.sonar();
-      case 'Tab':
-        return this.browsePlaces(c.shift ? -1 : 1);
-      case 'Enter':
+      case 'nextPlace':
+        return this.browsePlaces(1);
+      case 'prevPlace':
+        return this.browsePlaces(-1);
+      case 'setDestination':
         return this.setDestination();
-      case 'g':
-        return c.shift ? this.clearDestination() : this.destinationInfo();
-      case 'Backspace':
+      case 'destinationInfo':
+        return this.destinationInfo();
+      case 'clearDestination':
         return this.clearDestination();
-      case 'c':
+      case 'filter':
         return this.cycleFilter();
-      case 'v':
-        if (c.shift) return this.deleteNote();
+      case 'note':
         return this.onNote?.();
-      case 'z':
+      case 'deleteNote':
+        return this.deleteNote();
+      case 'share':
         return void this.shareLink();
-      case 'u':
+      case 'tripSummary':
         return this.tripSummary();
-      case 'e':
+      case 'whereAmI':
         return void this.whereAmI();
-      case 'o':
+      case 'preview':
         return this.routePreview();
-      case 'x':
+      case 'transit':
         return this.nearestTransit();
-      case 'y':
+      case 'saveFavorite':
         return this.saveFavorite();
-      case 'r':
+      case 'align':
         return this.alignToRoad();
-      case 'f':
+      case 'search':
         this.onMenu?.('search');
         return;
-      case 'j':
-        if (c.ctrl) this.onJump?.();
+      case 'jump':
+        this.onJump?.();
         return;
-      case 'q':
-        return c.shift ? this.onSaveRoute?.() : this.onRoutes?.();
-      case 'd': {
-        if (c.ctrl) return this.onNavigate?.();
+      case 'saveRoute':
+        return this.onSaveRoute?.();
+      case 'routes':
+        return this.onRoutes?.();
+      case 'navigate':
+        return this.onNavigate?.();
+      case 'distance': {
         // pressed twice quickly: switch walking routes between shortest and streets only
         const now = performance.now();
         const double = now - this.lastDPress < 400;
         this.lastDPress = double ? -Infinity : now;
         return double ? this.toggleWalkRoute() : this.distanceToGo();
       }
-      case 'm':
+      case 'mapRotation':
         this.settings.headingUpMap = !this.settings.headingUpMap;
         this.map.headingUp = this.settings.headingUpMap;
         saveSettings(this.settings);
         return this.speech.say(this.settings.headingUpMap ? 'Map rotates with heading.' : 'Map north up.', 'high');
-      case 'a':
+      case 'roadAssist':
         this.settings.roadAssist = !this.settings.roadAssist;
         saveSettings(this.settings);
         return this.speech.say(`Road assist ${this.settings.roadAssist ? 'on' : 'off'}.`, 'high');
-      case 'p':
-        if (c.shift) {
-          this.settings.soundProfile = nextProfile(this.settings.soundProfile);
-          this.settings.vehicleProfiles = { ...this.settings.vehicleProfiles, [this.vehicle.id]: this.settings.soundProfile };
-          saveSettings(this.settings);
-          return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
-        }
+      case 'soundProfile':
+        this.settings.soundProfile = nextProfile(this.settings.soundProfile);
+        this.settings.vehicleProfiles = { ...this.settings.vehicleProfiles, [this.vehicle.id]: this.settings.soundProfile };
+        saveSettings(this.settings);
+        return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
+      case 'announcePlaces':
         this.settings.announcePlaces = !this.settings.announcePlaces;
         saveSettings(this.settings);
         return this.speech.say(`Place announcements ${this.settings.announcePlaces ? 'on' : 'off'}.`, 'high');
-      case '[':
+      case 'reviewBack':
         return this.speech.review(-1);
-      case ']':
+      case 'reviewNext':
         return this.speech.review(1);
-      case '1':
-      case '2':
-      case '3':
-      case '4':
-        return this.setVehicle((['walker', 'bicycle', 'car', 'helicopter'] as const)[Number(c.key) - 1], true);
-      case 'PageUp':
-      case 'PageDown': {
-        const v = Math.max(0, Math.min(1, this.settings.volume + (c.key === 'PageUp' ? 0.1 : -0.1)));
+      case 'walker':
+      case 'bicycle':
+      case 'car':
+      case 'helicopter':
+        return this.setVehicle(action, true);
+      case 'volumeUp':
+      case 'volumeDown': {
+        const v = Math.max(0, Math.min(1, this.settings.volume + (action === 'volumeUp' ? 0.1 : -0.1)));
         this.settings.volume = Math.round(v * 10) / 10;
         this.audio.setVolume(this.settings.volume);
         saveSettings(this.settings);

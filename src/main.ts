@@ -13,7 +13,8 @@ import { Speech } from './speech';
 import { Tutorial } from './tutorial';
 import { bindRoutes } from './routesui';
 import { initManage } from './manage';
-import { setupPalette } from './palette';
+import { REBIND_NAME, setupPalette } from './palette';
+import { setupRebind } from './rebind';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -461,6 +462,7 @@ document.addEventListener('keydown', (e) => {
 
 // F2 works everywhere: key events from the explorer bubble up to the document too
 const openPalette = setupPalette(
+  () => settings.keyBindings,
   () => {
     if (!game) {
       speech.say('Start the explorer first.', 'high');
@@ -474,7 +476,21 @@ const openPalette = setupPalette(
     game?.resume();
     game?.focus(stage);
   },
-  (x) => game?.run(x.key, x),
+  (x) => {
+    if (x.name === REBIND_NAME) {
+      game?.pause();
+      openRebind();
+    } else game?.run(x.key, x);
+  },
+);
+const openRebind = setupRebind(
+  () => settings.keyBindings,
+  (keyBindings) => update({ keyBindings }),
+  (t) => speech.say(t, 'high'),
+  () => {
+    game?.resume();
+    game?.focus(stage);
+  },
 );
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F2') {
