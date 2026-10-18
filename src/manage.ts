@@ -24,6 +24,8 @@ export function initManage(d: Deps) {
   window.addEventListener(SAVED_CHANGED, syncMap);
   syncMap();
 
+  let afterDelete: { list: HTMLElement; i: number } | undefined;
+
   function row(list: HTMLElement, label: string, value: string, onSave: (v: string) => void, onDelete: () => void, onGo?: () => void) {
     const li = document.createElement('li');
     const at = { list, i: list.children.length };
@@ -57,11 +59,15 @@ export function initManage(d: Deps) {
     });
     li.append(input, btn('Save', save));
     if (onGo) li.append(btn('Go to', onGo));
-    li.append(btn('Delete', onDelete));
+    li.append(btn('Delete', () => {
+      afterDelete = at; // the next row takes this one's place, so focus stays put
+      onDelete();
+    }));
     list.appendChild(li);
   }
 
-  function render(focus?: { list: HTMLElement; i: number }) {
+  function render(focus = afterDelete) {
+    afterDelete = undefined;
     const places = $('saved-places');
     const notes = $('saved-notes');
     places.replaceChildren();
@@ -98,7 +104,7 @@ export function initManage(d: Deps) {
     if (!favs.length) places.innerHTML = '<li>No saved places. Press Y in the explorer to save one.</li>';
     if (!ns.length) notes.innerHTML = '<li>No notes. Press V in the explorer to leave one.</li>';
     // rebuilding the rows drops the focused control, which would send keyboard users back to the top of the page
-    if (dlg.open && !dlg.contains(document.activeElement)) (focus?.list.children[focus.i]?.querySelector<HTMLElement>('input') ?? places.querySelector<HTMLElement>('input') ?? $('saved-close')).focus();
+    if (dlg.open && !dlg.contains(document.activeElement)) (focus?.list.children[Math.min(focus.i, focus.list.children.length - 1)]?.querySelector<HTMLElement>('input') ?? places.querySelector<HTMLElement>('input') ?? $('saved-close')).focus();
   }
 
   $('saved-btn').addEventListener('click', () => {
