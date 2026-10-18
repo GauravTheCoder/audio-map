@@ -32,9 +32,10 @@ function template(signal?: AbortSignal): Promise<string> {
   return tileUrl;
 }
 
+const MAX_LAT = 85.0511; // the Web Mercator limit
 export const tileX = (lon: number) => ((lon + 180) / 360) * 2 ** Z;
 export const tileY = (lat: number) => {
-  const r = (lat * Math.PI) / 180;
+  const r = (Math.max(-MAX_LAT, Math.min(MAX_LAT, lat)) * Math.PI) / 180;
   return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** Z;
 };
 /** global tile-unit coordinates (x right, y down) to lat/lon */
@@ -48,7 +49,9 @@ function toLatLon(gx: number, gy: number): LatLon {
 /** One tile at zoom Z. */
 export async function fetchTile(tx: number, ty: number, signal?: AbortSignal): Promise<VectorTile> {
   const url = await template(signal);
-  const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(tx)).replace('{y}', String(ty)), { signal });
+  // tiles past the dateline wrap round to the other side of the map
+  const wx = ((tx % 2 ** Z) + 2 ** Z) % 2 ** Z;
+  const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(wx)).replace('{y}', String(ty)), { signal });
   if (!r.ok) throw new Error(`Tile ${tx},${ty}: ${r.status}`);
   return new VectorTile(new PbfReader(new Uint8Array(await r.arrayBuffer())));
 }

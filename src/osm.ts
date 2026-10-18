@@ -68,7 +68,8 @@ function bbox(c: LatLon, r: number): string {
   const lon = Math.round(c.lon / 0.002) * 0.002;
   const dLat = r / 110_540;
   const dLon = r / (111_320 * Math.cos((lat * Math.PI) / 180));
-  return [lat - dLat, lon - dLon, lat + dLat, lon + dLon].map((v) => v.toFixed(5)).join(',');
+  // Overpass cannot take a box across the dateline or past a pole, so clip to the map
+  return [Math.max(-90, lat - dLat), Math.max(-180, lon - dLon), Math.min(90, lat + dLat), Math.min(180, lon + dLon)].map((v) => v.toFixed(5)).join(',');
 }
 
 export interface OverpassEl {
