@@ -2079,13 +2079,6 @@ export class Game {
         saveSettings(this.settings);
         return this.speech.say(this.settings.headingUpMap ? 'Map rotates with heading.' : 'Map north up.', 'high');
       case 'a':
-        if (c.shift) {
-          this.settings.soundTheme = nextTheme(this.settings.soundTheme);
-          this.audio.setTheme(this.settings.soundTheme);
-          saveSettings(this.settings);
-          this.audio.loaded();
-          return this.speech.say(THEME_TEXT[this.settings.soundTheme], 'high');
-        }
         this.settings.roadAssist = !this.settings.roadAssist;
         saveSettings(this.settings);
         return this.speech.say(`Road assist ${this.settings.roadAssist ? 'on' : 'off'}.`, 'high');
@@ -2147,6 +2140,14 @@ export class Game {
       window.setTimeout(() => this.speech.say(word, 'high'), (4000 + i * 2200) * slow),
       window.setTimeout(() => this.audio.testTone(rel), (4000 + i * 2200) * slow + 800),
     ]);
+  }
+
+  cycleTheme() {
+    this.settings.soundTheme = nextTheme(this.settings.soundTheme);
+    this.audio.setTheme(this.settings.soundTheme);
+    saveSettings(this.settings);
+    this.audio.loaded();
+    this.speech.say(THEME_TEXT[this.settings.soundTheme], 'high');
   }
 
   private help() {

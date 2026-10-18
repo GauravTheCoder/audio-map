@@ -474,7 +474,10 @@ const openPalette = setupPalette(
     game?.resume();
     game?.focus(stage);
   },
-  (x) => game?.run(x.key, x),
+  (x) => {
+    if (x.key === 'theme') game?.cycleTheme();
+    else game?.run(x.key, x);
+  },
 );
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F2') {
