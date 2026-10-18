@@ -18,7 +18,7 @@ interface Step {
   /** codes to press: in this order, or any one of them when `any` is set */
   seq: string[];
   any?: boolean;
-  /** passes only once this holds (checked against the state when the step began); without it the key press is enough */
+  /** passes only once this holds against the state at the step's start or at any of its key presses; without it the key press is enough */
   ok?: (then: Snap, now: Snap) => boolean;
   hint?: string;
 }
@@ -26,7 +26,7 @@ interface Step {
 /** how long after the keys are pressed the effect is awaited, in ms */
 const SETTLE = 2000;
 const hasDest = (_: Snap, s: Snap) => s.hasDest;
-const turned = (a: Snap, b: Snap) => Math.abs(((b.heading - a.heading + 540) % 360) - 180) > 1;
+const turned = (a: Snap, b: Snap) => Math.abs(((b.heading - a.heading + 540) % 360) - 180) > 0.5;
 
 const STEPS: Step[] = [
   { say: 'Hold the up arrow to move. Try it now.', seq: ['ArrowUp'], ok: (_, s) => s.speed > 0.3, hint: 'You are not moving yet. Keep holding the up arrow.' },
@@ -47,7 +47,8 @@ const STEPS: Step[] = [
 export class Tutorial {
   private step = -1;
   private pos = 0;
-  private then!: Snap;
+  /** the state when the step began and at each of its key presses, before the game acted on the key */
+  private marks: Snap[] = [];
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
@@ -59,7 +60,7 @@ export class Tutorial {
   begin() {
     this.step = 0;
     this.pos = 0;
-    this.then = this.probe();
+    this.marks = [this.probe()];
     this.speech.say('Learning the keys. Backslash skips a step. Delete exits.', 'high');
     this.speech.say(STEPS[0].say);
   }
@@ -75,7 +76,10 @@ export class Tutorial {
     if (this.timer) return c.code === 'Delete' || c.code === 'Backslash' ? this.control(c) : false;
     if (c.code === 'Delete' || c.code === 'Backslash') return this.control(c);
     const { seq, any } = STEPS[this.step];
-    if (any ? seq.includes(c.code) : c.code === seq[this.pos] && ++this.pos === seq.length) this.settle(this.step);
+    const hit = any ? seq.includes(c.code) : c.code === seq[this.pos];
+    if (!hit) return false;
+    this.marks.push(this.probe());
+    if (any || ++this.pos === seq.length) this.settle(this.step);
     return false;
   }
 
@@ -91,7 +95,7 @@ export class Tutorial {
   private settle(step: number, waited = 0) {
     const { ok, hint } = STEPS[step];
     const now = this.probe();
-    if (now.ready && (!ok || ok(this.then, now))) {
+    if (now.ready && (!ok || this.marks.some((m) => ok(m, now)))) {
       this.timer = undefined;
       this.audio.loaded();
       return this.next('Good.');
@@ -107,7 +111,7 @@ export class Tutorial {
   private next(said: string) {
     const step = ++this.step;
     this.pos = 0;
-    this.then = this.probe();
+    this.marks = [this.probe()];
     if (step >= STEPS.length) return this.end('Good. You know the keys. Press Shift F1 to practise again.');
     // the game answers the key at high priority first; speak after it so it is not cut off
     setTimeout(() => {

@@ -51,6 +51,32 @@ describe('tutorial checks', () => {
     expect(said).toContain('Good.');
   });
 
+  it('turning passes when left then right cancel out, since the heading changed in between', () => {
+    t.onKey(key('Backslash'));
+    wait(800);
+    t.onKey(key('Backslash'));
+    wait(800);
+    press('ArrowLeft');
+    snap.heading = 359; // the game turned 1 degree left
+    press('ArrowRight');
+    snap.heading = 0; // and 1 degree back right
+    wait(1000);
+    expect(said).toContain('Good.');
+  });
+
+  it('braking passes after the hint even when the step began stopped', () => {
+    t.onKey(key('Backslash')); // skip to brake while stopped
+    wait(800);
+    press('Slash');
+    wait(2300);
+    expect(said.at(-1)).toBe('Hold the up arrow to get moving, then brake.');
+    snap.speed = 2; // got moving
+    press('Slash');
+    snap.speed = 1; // and slowed down
+    wait(1000);
+    expect(said).toContain('Good.');
+  });
+
   it('waits for the map before passing anything', () => {
     snap.ready = false;
     press('ArrowUp');
