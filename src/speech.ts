@@ -54,7 +54,8 @@ export class Speech {
 
   private output(text: string, priority: Priority) {
     if (this.mode === 'voice' && 'speechSynthesis' in window) {
-      if (priority === 'high') speechSynthesis.cancel();
+      // a backlog of stale place announcements at speed is worse than dropping it for the newest message
+      if (priority === 'high' || (priority === 'normal' && speechSynthesis.pending)) speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = this.rate;
       u.onstart = () => this.onSpeakingChange?.(true);
