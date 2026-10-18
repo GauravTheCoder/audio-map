@@ -23,6 +23,7 @@ Headphones recommended (place sounds are positioned in 3D around you).
 |---|---|
 | `src/game.ts` | Game loop, physics, road assist, announcements, key commands |
 | `src/world.ts` | Road graph, junction grouping, spatial indexes, places |
+| `src/placeinfo.ts` | Which corner or side of the street a stop, entrance or crossing is on; stop letters and lines |
 | `src/areas.ts` | Buildings, water, parks and land use under a point, for grid mode |
 | `src/osm.ts` | Overpass and Nominatim fetching, retry, cache |
 | `src/audio/audio.ts` | Vehicle engines, earcons, HRTF place cues, rumble strips |
