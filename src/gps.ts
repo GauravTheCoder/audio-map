@@ -57,8 +57,11 @@ export function pickHeading(compass: number | null, course: number | null, speed
  * The estimate's own uncertainty grows with the time since the last fix and the speed we may have covered.
  */
 export function fuse(prev: Estimate | null, x: number, y: number, acc: number, t: number, speed: number): Estimate {
+  // a NaN position, speed or a zero accuracy would poison every later estimate
+  if (!Number.isFinite(x + y)) return prev ?? { x: 0, y: 0, acc: 1000, t };
+  acc = Math.max(acc, 1);
   if (!prev) return { x, y, acc, t };
-  const reach = Math.max(speed, 1) * Math.max(0, t - prev.t);
+  const reach = Math.max(Number.isFinite(speed) ? speed : 0, 1) * Math.max(0, t - prev.t);
   const pv = prev.acc ** 2 + reach ** 2;
   const k = pv / (pv + acc ** 2);
   return { x: prev.x + (x - prev.x) * k, y: prev.y + (y - prev.y) * k, acc: Math.sqrt((1 - k) * pv), t };
@@ -130,7 +133,7 @@ export class LiveGps {
         const course = c.heading === null || Number.isNaN(c.heading) ? null : c.heading;
         const m = c.speed === null || course === null ? this.prev && motionBetween(this.prev, here) : null;
         this.prev = here;
-        const speed = c.speed ?? m?.speed ?? 0;
+        const speed = c.speed !== null && Number.isFinite(c.speed) ? c.speed : (m?.speed ?? 0);
         const heading = course ?? m?.heading ?? null;
         this.onFix({ lat: c.latitude, lon: c.longitude, speed, heading, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null });
       },

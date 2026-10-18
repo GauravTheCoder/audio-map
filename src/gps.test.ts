@@ -77,3 +77,12 @@ describe('motionBetween', () => {
     expect(motionBetween({ lat: 51, lon: 0, t: 0 }, { lat: 51.001, lon: 0, t: 100 })).toBeNull();
   });
 });
+
+describe('fuse with bad input', () => {
+  it('stays finite for a zero accuracy, NaN speed or NaN position', () => {
+    const prev = { x: 0, y: 0, acc: 0, t: 1 };
+    for (const e of [fuse(prev, 5, 5, 0, 1, 0), fuse(prev, 5, 5, 10, 2, NaN), fuse(prev, NaN, 5, 10, 2, 1)]) {
+      expect(Object.values(e).every(Number.isFinite)).toBe(true);
+    }
+  });
+});
