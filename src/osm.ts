@@ -348,13 +348,15 @@ export interface GeocodeResult {
 }
 
 /** Search for places. With `near`, results around that point are preferred (not required). */
+const GEOCODE_TIMEOUT_MS = 15_000;
+
 export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]> {
   let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(q)}`;
   if (near) {
     const d = 0.15; // ~15 km
     url += `&viewbox=${near.lon - d},${near.lat + d},${near.lon + d},${near.lat - d}`;
   }
-  const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' } });
+  const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' }, signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Search failed (${res.status})`);
   const json = (await res.json()) as { display_name: string; lat: string; lon: string; boundingbox?: string[] }[];
   return json.map((r) => {
@@ -373,7 +375,7 @@ export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]
 export async function reverseGeocode(p: LatLon): Promise<string | null> {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&lat=${p.lat}&lon=${p.lon}`;
-    const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' } });
+    const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' }, signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
     if (!res.ok) return null;
     const json = (await res.json()) as { address?: Record<string, string> };
     const a = json.address ?? {};
