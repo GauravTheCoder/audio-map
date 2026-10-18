@@ -85,7 +85,7 @@ export function setupRebind(
       }
       if (MODIFIER_KEYS.includes(e.key)) return;
       if (e.altKey) return say('Error: Alt combinations are not supported.');
-      const b: Binding = { key: e.key.length === 1 ? e.key.toLowerCase() : e.key, shift: e.shiftKey, ctrl: e.ctrlKey };
+      const b: Binding = { key: e.key.length === 1 ? e.key.toLowerCase() : e.key, shift: e.shiftKey, ctrl: e.key !== 'Control' && e.ctrlKey };
       const r = tryBind(pending.id!, b, getKeys());
       if (!r.ok) {
         candidate = null;
