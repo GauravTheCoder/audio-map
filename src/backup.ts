@@ -120,9 +120,14 @@ function read(k: string): unknown {
   }
 }
 
-// Stored data may come from older versions, so re-validate it the same way as a file.
+/** The user's own saved entries, uncapped: validate()'s caps are for untrusted files and would delete data here. */
+function keep<T>(k: string, textKey: string): T[] {
+  const v = read(k);
+  return (Array.isArray(v) ? v : []).filter((x) => isObj(x) && typeof x[textKey] === 'string' && coord(x.lat, 90) && coord(x.lon, 180));
+}
+
 function stored(): Backup {
-  return validate({ app: 'audio-map', places: read(PLACES_KEY), notes: read(NOTES_KEY), settings: read(SETTINGS_KEY) });
+  return { places: keep(PLACES_KEY, 'name'), notes: keep(NOTES_KEY, 'text'), settings: validate({ app: 'audio-map', settings: read(SETTINGS_KEY) }).settings };
 }
 
 /** Reflects imported settings in the settings form, which otherwise only reads settings at start-up. */
