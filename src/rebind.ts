@@ -27,6 +27,8 @@ export function setupRebind(
   const q = document.getElementById('rebind-q') as HTMLInputElement;
   const list = document.getElementById('rebind-list') as HTMLUListElement;
   const reset = document.getElementById('rebind-reset') as HTMLButtonElement;
+  // role=application makes NVDA/JAWS pass every key through instead of using it for browse-mode navigation
+  const capture = document.getElementById('rebind-capture') as HTMLElement;
   let shown: Action[] = [];
   let active = 0;
   let pending: Action | null = null;
@@ -55,6 +57,7 @@ export function setupRebind(
   const ask = (x: Action) => {
     pending = x;
     candidate = null;
+    capture.focus();
     say(`${x.name}, now ${x.label}. Press the new key, or Escape to cancel.`);
   };
 
@@ -67,6 +70,7 @@ export function setupRebind(
       if (e.key === 'Escape') {
         pending = null;
         candidate = null;
+        q.focus();
         say('Cancelled.');
         return;
       }
@@ -76,6 +80,7 @@ export function setupRebind(
         pending = null;
         candidate = null;
         render();
+        q.focus();
         return;
       }
       if (MODIFIER_KEYS.includes(e.key)) return;
