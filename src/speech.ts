@@ -1,6 +1,6 @@
 // Speech output. Two backends:
 //  - screenreader: ARIA live regions read by NVDA / JAWS / Narrator / VoiceOver in the user's own voice.
-//  - voice: the browser's built-in speech synthesis (lower latency, interruptible).
+//  - voice: the browser's built-in speech synthesis.
 
 import type { SpeechMode } from './settings';
 
