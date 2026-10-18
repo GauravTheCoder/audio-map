@@ -10,7 +10,8 @@ const KEY = 'audio-map-notes';
 export function loadNotes(): Note[] {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '[]');
-    return Array.isArray(raw) ? raw : [];
+    // stored data is untrusted: drop entries the game and the list could not use
+    return Array.isArray(raw) ? raw.filter((n) => typeof n?.text === 'string' && Number.isFinite(n.lat) && Number.isFinite(n.lon)) : [];
   } catch {
     return [];
   }
