@@ -207,7 +207,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     } else if (t.railway === 'subway_entrance' || t.railway === 'train_station_entrance') {
       places.push({ id: `n${el.id}`, lat, lon, tags: t });
     } else if (t.railway === 'platform') {
-      places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: { ...t, name: t.name ?? `Platform ${t.ref}` } });
+      places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: { ...t, name: t.name ?? (t.ref ? `Platform ${t.ref}` : 'Platform') } });
     } else if (t.name) {
       const place: RawPlace = { id: `${el.type[0]}${el.id}`, lat, lon, tags: t };
       places.push(place);
