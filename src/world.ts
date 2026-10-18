@@ -71,6 +71,32 @@ export interface Place {
   group: PlaceGroup;
   x: number;
   y: number;
+  /** OSM details that help find the exact spot: stop letters, lines, address */
+  info?: PlaceInfo;
+  /** doors of a place mapped as a building; aim for these rather than its middle */
+  entrances?: Entrance[];
+}
+
+export interface PlaceInfo {
+  /** stop letter, bay or position at the stop, e.g. "K", "2" or "NW Far Side" */
+  localRef?: string;
+  /** lines calling here, e.g. "5;12;22" */
+  routeRef?: string;
+  /** compass direction buses leave in (UK NaPTAN), e.g. "NW" */
+  bearing?: string;
+  /** the OSM node, for looking up the lines that call here */
+  osmNode?: number;
+  /** house number and street */
+  address?: string;
+}
+
+export interface Entrance {
+  x: number;
+  y: number;
+  main: boolean;
+  /** its name or reference, e.g. "Exit B" */
+  label?: string;
+  wheelchair?: string;
 }
 
 /** Something to warn about when walking towards it. */
@@ -78,7 +104,15 @@ export interface Hazard {
   text: string;
   x: number;
   y: number;
+  /** e.g. "audible signal", "island in the middle" */
+  extras?: string[];
 }
+
+/** Paths for walking or cycling rather than streets. */
+export const MINOR = new Set(['footway', 'path', 'steps', 'cycleway', 'track', 'pedestrian', 'bridleway', 'corridor']);
+
+/** Categories of stops and stations, the places X steps through. */
+export const TRANSIT = new Set(['bus stop', 'tram stop', 'station', 'bus station', 'station entrance']);
 
 export interface Junction {
   nodes: GNode[];
@@ -151,6 +185,9 @@ export function humanize(v: string): string {
 function groupFor(tags: Record<string, string>): { category: string; group: PlaceGroup } {
   const a = tags.amenity;
   if (tags.highway === 'bus_stop') return { category: 'bus stop', group: 'transport' };
+  if (tags.railway === 'tram_stop') return { category: 'tram stop', group: 'transport' };
+  if (tags.railway === 'subway_entrance' || tags.railway === 'train_station_entrance') return { category: 'station entrance', group: 'transport' };
+  if (tags.railway === 'platform') return { category: 'platform', group: 'transport' };
   if (tags.railway === 'station' || tags.public_transport === 'station') return { category: 'station', group: 'transport' };
   if (a) {
     if (['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'ice_cream', 'food_court', 'biergarten'].includes(a))
@@ -175,6 +212,23 @@ function groupFor(tags: Record<string, string>): { category: string; group: Plac
   }
   if (tags.historic) return { category: `historic ${humanize(tags.historic)}`, group: 'culture' };
   return { category: 'place', group: 'other' };
+}
+
+
+function placeInfo(id: string, t: Record<string, string>): PlaceInfo | undefined {
+  const info: PlaceInfo = {};
+  const indicator = /^stop\s+(\S+)$/i.exec(t['naptan:Indicator'] ?? '')?.[1];
+  const entrance = t.railway === 'subway_entrance' || t.railway === 'train_station_entrance';
+  const localRef = t.local_ref ?? indicator ?? (entrance ? t.ref : undefined);
+  if (localRef) info.localRef = localRef;
+  if (t.route_ref) info.routeRef = t.route_ref;
+  if (t['naptan:Bearing']) info.bearing = t['naptan:Bearing'];
+  if (t.highway === 'bus_stop' || t.railway === 'tram_stop') {
+    const n = /^n(\d+)$/.exec(id);
+    if (n) info.osmNode = Number(n[1]);
+  }
+  if (t['addr:housenumber'] && t['addr:street']) info.address = `${t['addr:housenumber']} ${t['addr:street']}`;
+  return Object.keys(info).length ? info : undefined;
 }
 
 export class World {
@@ -250,12 +304,16 @@ export class World {
     }
   }
 
-  private addHazard(text: string, ll?: LatLon) {
+  private addHazard(text: string, ll?: LatLon, extras?: string[]) {
     if (!ll) return;
     const p = this.proj.toXY(ll.lat, ll.lon);
     // crossings are often mapped on each side of the road
-    for (const h of this.hazardGrid.query(p.x, p.y, 12)) if (h.text === text && dist(h.x, h.y, p.x, p.y) < 12) return;
-    const h = { text, x: p.x, y: p.y };
+    for (const h of this.hazardGrid.query(p.x, p.y, 12)) {
+      if (h.text !== text || dist(h.x, h.y, p.x, p.y) >= 12) continue;
+      if (extras?.length && !h.extras?.length) h.extras = extras; // keep the better-described one
+      return;
+    }
+    const h: Hazard = { text, x: p.x, y: p.y, extras: extras?.length ? extras : undefined };
     this.hazardGrid.insertBox(h, p.x, p.y, p.x, p.y);
   }
 
@@ -277,7 +335,7 @@ export class World {
       n.signals = true;
       for (const m of this.nodesNear(n.x, n.y, 30)) if (m.edges.length >= 3) m.signals = true;
     }
-    for (const c of raw.crossings ?? []) this.addHazard(c.text, c);
+    for (const c of raw.crossings ?? []) this.addHazard(c.text, c, c.extras);
     const proj = this.proj;
     for (const a of raw.access ?? []) this.access.push({ kind: a.kind, name: a.name, ...proj.toXY(a.lat, a.lon) });
     const seen = new Set<string>();
@@ -287,9 +345,24 @@ export class World {
       seen.add(key);
       const p = proj.toXY(rp.lat, rp.lon);
       const { category, group } = groupFor(rp.tags);
-      const place: Place = { id: rp.id, name: rp.tags.name, category, group, x: p.x, y: p.y };
+      const place: Place = { id: rp.id, name: rp.tags.name ?? 'Station entrance', category, group, x: p.x, y: p.y };
+      const info = placeInfo(rp.id, rp.tags);
+      if (info) place.info = info;
+      if (rp.entrances?.length) {
+        place.entrances = rp.entrances.map((e) => {
+          const q = proj.toXY(e.lat, e.lon);
+          const label = e.tags.name ?? (e.tags.ref ? `entrance ${e.tags.ref}` : undefined);
+          return { x: q.x, y: q.y, main: e.tags.entrance === 'main', label, wheelchair: e.tags.wheelchair };
+        });
+      }
       this.places.push(place);
       this.placeGrid.insertBox(place, p.x, p.y, p.x, p.y);
+    }
+    // an unnamed entrance takes the name of the station it leads to
+    for (const p of this.places) {
+      if (p.category !== 'station entrance' || p.name !== 'Station entrance') continue;
+      const st = this.placesNear(p.x, p.y, 300).find((n) => n.place.category === 'station');
+      if (st) p.name = st.place.name;
     }
   }
 
@@ -549,8 +622,6 @@ export class World {
     return bearing(n.x, n.y, cur.x, cur.y);
   }
 }
-
-const MINOR = new Set(['footway', 'path', 'steps', 'cycleway', 'track', 'pedestrian', 'bridleway', 'corridor']);
 
 /** A road leaving a roundabout that counts as one of its exits. */
 export function isRingExit(e: Edge, canUse: (w: Way) => boolean): boolean {

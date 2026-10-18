@@ -15,6 +15,8 @@ export interface RawPlace {
   lat: number;
   lon: number;
   tags: Record<string, string>;
+  /** doors on the outline of a place mapped as a building */
+  entrances?: { lat: number; lon: number; tags: Record<string, string> }[];
 }
 
 export interface RawRoads {
@@ -28,7 +30,7 @@ export interface RawPlaces {
   places: RawPlace[];
   signals: Set<number>;
   /** spots to warn about on foot: pedestrian crossings and level crossings */
-  crossings?: { lat: number; lon: number; text: string }[];
+  crossings?: { lat: number; lon: number; text: string; extras?: string[] }[];
   /** entrances, platforms and lifts, for finding your way in stations and buildings */
   access?: { lat: number; lon: number; kind: AccessKind; name?: string }[];
 }
@@ -69,7 +71,7 @@ function bbox(c: LatLon, r: number): string {
   return [lat - dLat, lon - dLon, lat + dLat, lon + dLon].map((v) => v.toFixed(5)).join(',');
 }
 
-interface OverpassEl {
+export interface OverpassEl {
   type: 'node' | 'way' | 'relation';
   id: number;
   lat?: number;
@@ -118,6 +120,7 @@ out skel qt;`;
 }
 
 export async function fetchPlaces(center: LatLon, radius: number, signal: AbortSignal, onRetry?: RetryNotice): Promise<RawPlaces> {
+  // ways come with their node ids, so doors on a building's outline can be matched to it
   const q = `[out:json][timeout:50][bbox:${bbox(center, radius)}];
 (
   nwr["amenity"]["name"];
@@ -126,7 +129,19 @@ export async function fetchPlaces(center: LatLon, radius: number, signal: AbortS
   nwr["leisure"]["name"];
   nwr["historic"]["name"];
   nwr["railway"="station"]["name"];
+)->.named;
+node.named;
+out center tags qt;
+rel.named;
+out center tags qt;
+way.named;
+out body center qt;
+node(w)["entrance"]["entrance"!~"^(emergency|service|exit|garage|staircase|no)$"];
+out qt;
+(
   node["highway"="bus_stop"];
+  node["railway"~"^(tram_stop|subway_entrance|train_station_entrance)$"];
+  nwr["railway"="platform"]["ref"];
   node["highway"="traffic_signals"];
   node["highway"="crossing"];
   node["railway"="level_crossing"];
@@ -138,11 +153,31 @@ export async function fetchPlaces(center: LatLon, radius: number, signal: AbortS
   node["elevator"="yes"];
 );
 out center tags qt;`;
+  return parsePlaces(await overpass(q, signal, onRetry));
+}
+
+/** Accessibility details of a crossing or signal, as spoken. */
+export function crossingExtras(t: Record<string, string>): string[] {
+  const out: string[] = [];
+  if (t['traffic_signals:sound'] === 'yes' || t['traffic_signals:sound'] === 'walk' || t['traffic_signals:sound'] === 'locate') out.push('audible signal');
+  if (t['traffic_signals:vibration'] === 'yes') out.push('vibrating button');
+  else if (t.button_operated === 'yes') out.push('push button');
+  if (t['crossing:island'] === 'yes' || t.crossing === 'island') out.push('island in the middle');
+  if (t.tactile_paving === 'yes') out.push('tactile paving');
+  return out;
+}
+
+const SKIP_DOOR = /^(emergency|service|exit|garage|staircase|no)$/;
+
+export function parsePlaces(els: OverpassEl[]): RawPlaces {
   const places: RawPlace[] = [];
   const signals = new Set<number>();
   const crossings: NonNullable<RawPlaces['crossings']> = [];
   const access: NonNullable<RawPlaces['access']> = [];
-  for (const el of await overpass(q, signal, onRetry)) {
+  // door node id -> places whose outline it is on
+  const doorOf = new Map<number, RawPlace[]>();
+  const doors: OverpassEl[] = [];
+  for (const el of els) {
     const t = el.tags;
     if (!t) continue;
     const lat = el.lat ?? el.center?.lat;
@@ -150,19 +185,71 @@ out center tags qt;`;
     if (lat === undefined || lon === undefined) continue;
     const kind = accessKind(t);
     if (kind) access.push({ lat, lon, kind, name: t.name ?? t.ref });
+    if (t.entrance && el.type === 'node' && !t.amenity && !t.shop && !t.railway && !t.highway) {
+      doors.push(el);
+      continue;
+    }
     if (t.highway === 'traffic_signals') {
       if (el.type === 'node') signals.add(el.id);
+      // a crossing mapped on the signal node itself
+      if ((t.crossing && t.crossing !== 'no') || crossingExtras(t).length) crossings.push({ lat, lon, text: 'Crossing with signals', extras: crossingExtras(t) });
     } else if (t.highway === 'crossing') {
-      crossings.push({ lat, lon, text: t.crossing === 'traffic_signals' ? 'Crossing with signals' : 'Pedestrian crossing' });
+      crossings.push({ lat, lon, text: t.crossing === 'traffic_signals' ? 'Crossing with signals' : 'Pedestrian crossing', extras: crossingExtras(t) });
     } else if (t.railway === 'level_crossing') {
       crossings.push({ lat, lon, text: 'Railway crossing' });
     } else if (t.highway === 'bus_stop') {
       places.push({ id: `n${el.id}`, lat, lon, tags: { ...t, name: t.name ?? 'Bus stop' } });
+    } else if (t.railway === 'tram_stop') {
+      places.push({ id: `n${el.id}`, lat, lon, tags: { ...t, name: t.name ?? 'Tram stop' } });
+    } else if (t.railway === 'subway_entrance' || t.railway === 'train_station_entrance') {
+      places.push({ id: `n${el.id}`, lat, lon, tags: t });
+    } else if (t.railway === 'platform') {
+      places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: { ...t, name: t.name ?? `Platform ${t.ref}` } });
     } else if (t.name) {
-      places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: t });
+      const place: RawPlace = { id: `${el.type[0]}${el.id}`, lat, lon, tags: t };
+      places.push(place);
+      for (const nid of el.nodes ?? []) {
+        const list = doorOf.get(nid);
+        if (list) list.push(place);
+        else doorOf.set(nid, [place]);
+      }
     }
   }
+  for (const d of doors) {
+    if (SKIP_DOOR.test(d.tags!.entrance)) continue;
+    for (const p of doorOf.get(d.id) ?? []) (p.entrances ??= []).push({ lat: d.lat!, lon: d.lon!, tags: d.tags! });
+  }
   return { places, signals, crossings, access };
+}
+
+/** A bus or tram line calling at a stop, e.g. { ref: '5E', to: 'Lincoln Square' }. */
+export interface StopRoute {
+  ref: string;
+  to?: string;
+}
+
+/** The lines that call at one stop (an OSM node), from the route relations it belongs to. */
+export async function fetchStopRoutes(nodeId: number, signal?: AbortSignal): Promise<StopRoute[]> {
+  const q = `[out:json][timeout:25];
+node(${nodeId});
+rel(bn)["route"~"^(bus|trolleybus|tram|minibus|share_taxi|light_rail)$"];
+out tags qt;`;
+  const seen = new Set<string>();
+  const out: StopRoute[] = [];
+  for (const el of await overpass(q, signal ?? new AbortController().signal)) {
+    const t = el.tags ?? {};
+    const ref = t.ref ?? t.name;
+    if (!ref) continue;
+    const key = `${ref}|${t.to ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ref, to: t.to });
+  }
+  // a line listed both with and without its destination: keep the one that says where it goes
+  const known = new Set(out.filter((r) => r.to).map((r) => r.ref));
+  return out
+    .filter((r) => r.to || !known.has(r.ref))
+    .sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
 }
 
 async function overpass(query: string, signal: AbortSignal, onRetry?: RetryNotice): Promise<OverpassEl[]> {

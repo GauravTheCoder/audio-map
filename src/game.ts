@@ -1,10 +1,12 @@
 // Game loop: vehicle physics, road awareness, announcements and keyboard commands.
 
+import { AreaMap, areaText, type Area } from './areas';
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
 import { MapView } from './mapview';
-import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
+import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
+import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
@@ -18,7 +20,7 @@ import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
 import { conditionsReport } from './weather';
 import { departuresReport, transitous } from './transit';
-import { World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
+import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
 /** distances (m) at which progress toward the destination is spoken */
@@ -38,6 +40,11 @@ const FILTER_NAMES: Record<PlaceGroup, string> = {
 };
 const FILTERS: (PlaceGroup | null)[] = [null, 'food', 'shop', 'transport', 'health', 'culture', 'nature', 'service'];
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
+/** grid mode step sizes, in metres (yards with imperial units) */
+const GRID_STEPS = [1, 10, 100, 1000];
+const GRID_MOVES: Record<string, [number, number]> = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+/** places whose exact spot (corner, side of the street) is always spoken */
+const STOPS = new Set(['bus stop', 'tram stop', 'station entrance']);
 
 const CAR_ROADS =
   'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
@@ -70,6 +77,12 @@ interface Target {
   y: number;
   /** size of the target area; you arrive when within this distance (or the vehicle's usual radius) */
   radius?: number;
+  /** where exactly, e.g. "north-west corner of Goodwin Avenue and Green Street" or "main entrance on Green Street" */
+  detail?: string;
+  /** the loaded place it was chosen from */
+  placeId?: string;
+  /** bus or tram lines calling there, once looked up */
+  lines?: string;
 }
 
 export interface PlaceMatch {
@@ -150,6 +163,14 @@ export class Game {
   private gpsEst: Estimate | null = null;
   private gpsPoor = false;
   private restartingForGps = false;
+  /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
+  private grid: { key: string | null; req: number } | null = null;
+  private gridStepIdx = 1;
+  private areas = new AreaMap();
+  /** what to say about each place's exact spot, worked out on first use (reset with the map) */
+  private details = new Map<string, { short: string; long: string }>();
+  /** lines calling at a stop, by OSM node, once looked up */
+  private stopLines = new Map<number, string>();
   private throttle = 0;
   private vehicle: VehicleProfile;
 
@@ -281,6 +302,8 @@ export class Game {
     this.dest = null;
     this.trip = null;
     this.browse = null;
+    this.grid = null;
+    this.details.clear();
     this.announcedNodes.clear();
     this.announcedPlaces.clear();
     this.announcedHazards.clear();
@@ -377,7 +400,9 @@ export class Game {
         w.addPlaces(t.places);
         return { world: w, full: false };
       };
-      const first = await Promise.any([full(), fromTiles(initial ? 0 : 10_000)]);
+      // a grid step can land well outside the current map: no head start then
+      const covered = !initial && !!this.world && this.inLoadedArea(at.x, at.y);
+      const first = await Promise.any([full(), fromTiles(covered ? 10_000 : 0)]);
       const world = first.world;
       if (abort.signal.aborted) return false;
 
@@ -472,6 +497,7 @@ export class Game {
    */
   private swapWorld(next: World) {
     const prev = this.world!;
+    this.details.clear();
     const announced = new Map<number, number>();
     for (const [id, t] of this.announcedNodes) {
       const n = prev.nodes.get(id);
@@ -527,6 +553,7 @@ export class Game {
   }
 
   applySettings(s: Settings) {
+    if (s.units !== this.settings.units) this.details.clear();
     this.settings = s;
     this.speech.configure(s.speechMode, s.voiceRate);
     this.audio.setVolume(s.volume);
@@ -589,30 +616,42 @@ export class Game {
   private step(dt: number) {
     this.clock += dt;
     const v = this.vehicle;
-    if (this.live && this.liveFix) this.followGps(dt);
-    else this.drive(dt);
+    if (this.grid) {
+      // grid steps move the traveller; only notes, the destination and map loading carry on
+      this.speed = 0;
+      this.throttle = 0;
+      this.updateRumble();
+      if (this.clock > this.nextPlaceCheck) {
+        this.nextPlaceCheck = this.clock + 0.25;
+        this.checkNotes();
+      }
+      this.updateDestination();
+    } else {
+      if (this.live && this.liveFix) this.followGps(dt);
+      else this.drive(dt);
 
-    this.updateRoad(false);
-    this.updateRumble();
-    this.updateRing();
-    this.checkInJunction();
+      this.updateRoad(false);
+      this.updateRumble();
+      this.updateRing();
+      this.checkInJunction();
 
-    if (this.clock > this.nextAheadCheck) {
-      this.nextAheadCheck = this.clock + 0.1;
-      this.checkAhead();
+      if (this.clock > this.nextAheadCheck) {
+        this.nextAheadCheck = this.clock + 0.1;
+        this.checkAhead();
+      }
+      this.updateProximityBeeps();
+      if (this.route && this.clock > this.nextRouteCheck) {
+        this.nextRouteCheck = this.clock + 0.1;
+        this.updateRoute();
+      }
+      if (this.clock > this.nextPlaceCheck) {
+        this.nextPlaceCheck = this.clock + 0.25;
+        this.checkPlaces();
+        this.checkHazards();
+        this.checkNotes();
+      }
+      this.updateDestination();
     }
-    this.updateProximityBeeps();
-    if (this.route && this.clock > this.nextRouteCheck) {
-      this.nextRouteCheck = this.clock + 0.1;
-      this.updateRoute();
-    }
-    if (this.clock > this.nextPlaceCheck) {
-      this.nextPlaceCheck = this.clock + 0.25;
-      this.checkPlaces();
-      this.checkHazards();
-      this.checkNotes();
-    }
-    this.updateDestination();
 
     if (!this.loading && this.clock > this.nextLoadTry && dist(this.x, this.y, this.loadCenter.x, this.loadCenter.y) > v.loadRadius * 0.55) {
       void this.load(false);
@@ -1391,7 +1430,9 @@ export class Game {
       if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
       this.announcedHazards.set(key, this.clock);
       this.audio.hazardCue(h.text, relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y)), 1 - Math.min(1, d / reach));
-      this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}`, 'high');
+      const leg = h.text === 'Pedestrian crossing' || h.text === 'Crossing with signals' ? crossingLeg(this.world!, h.x, h.y, this.settings.units) : '';
+      const extras = h.extras?.length ? `. ${cap(h.extras.join(', '))}` : '';
+      this.speech.say(`${h.text} ahead, ${fmtDistance(d, this.settings.units)}${leg ? `, ${leg}` : ''}${extras}`, 'high');
       break;
     }
   }
@@ -1411,7 +1452,8 @@ export class Game {
       const far = Math.min(1, d / this.vehicle.passRadius);
       const level = (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1) * cueLevelScale(this.speed, this.speaking);
       this.audio.placeCue(place.group, rel, level, undefined, far);
-      this.speech.say(placeSpeech(place.name, place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
+      const spot = this.placeDetail(place).short;
+      this.speech.say(placeSpeech(place.name, spot ? `${place.category}, ${spot}` : place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
       this.lastPlaceSpoken = this.clock;
       break;
     }
@@ -1967,6 +2009,7 @@ export class Game {
       return;
     }
     const u = this.settings.units;
+    if (this.grid && this.gridCommand(c)) return;
     switch (c.code) {
       case 'ArrowUp':
       case 'ArrowDown':
@@ -1996,6 +2039,8 @@ export class Game {
       case 'F1':
       case 'k':
         return this.help();
+      case 'F3':
+        return this.toggleGrid();
       case 'h':
         if (c.shift) return this.calibrate();
         return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
@@ -2128,7 +2173,7 @@ export class Game {
   }
 
   private keyUp(code: string) {
-    if (!this.world) return;
+    if (!this.world || this.grid) return;
     if (code === 'ArrowUp' || code === 'ArrowDown' || code === 'Slash') {
       if (this.input.isDown('ArrowUp') || this.input.isDown('ArrowDown') || this.input.isDown('Slash')) return;
       if (Math.abs(this.speed - this.speedAtPress) < 0.2) return;
@@ -2161,6 +2206,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
+        'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
@@ -2412,7 +2458,9 @@ export class Game {
       () => this.live === live && this.speech.say('GPS signal back.', 'normal'),
     );
     this.live = live;
-    this.speech.say('Live GPS on. Waiting for your location. The keyboard works until it arrives.', 'high');
+    const gridOff = !!this.grid;
+    this.grid = null;
+    this.speech.say(`${gridOff ? 'Grid mode off. ' : ''}Live GPS on. Waiting for your location. The keyboard works until it arrives.`, 'high');
     await live.start();
   }
 
@@ -2612,9 +2660,9 @@ export class Game {
   private nearestTransit() {
     const stops = this.transitStops().slice(0, 5);
     if (!stops.length) return this.speech.say('No bus stops or stations on the loaded map.', 'high');
-    const cur = this.dest ? stops.findIndex(({ p }) => p.x === this.dest!.x && p.y === this.dest!.y) : -1;
+    const cur = this.dest ? stops.findIndex(({ p }) => p.id === this.dest!.placeId) : -1;
     const { p } = stops[(cur + 1) % stops.length];
-    this.setTarget({ name: p.name, x: p.x, y: p.y });
+    this.setTarget(this.targetFor(p));
   }
 
   /** Shift X: say the nearest entrances, platforms and lifts with direction and distance. */
@@ -2637,17 +2685,90 @@ export class Game {
     void departuresReport(transitous, { name: stop.p.name, ...ll }).then((t) => this.speech.say(t, 'high'));
   }
 
+  /** Stops and stations, nearest first; stops sharing a name nearby (the corners of one intersection) stay together. */
   private transitStops() {
-    return this.world!.places
-      .filter((p) => p.category === 'bus stop' || p.category === 'station' || p.category === 'bus station')
-      .map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }))
-      .sort((a, b) => a.d - b.d);
+    const list = this.world!.places.filter((p) => TRANSIT.has(p.category)).map((p) => ({ p, d: dist(this.x, this.y, p.x, p.y) }));
+    const anchor = new Map<Place, number>();
+    for (const s of list) {
+      let a = s.d;
+      for (const o of list) if (o.p.name === s.p.name && o.d < a && dist(o.p.x, o.p.y, s.p.x, s.p.y) < 250) a = o.d;
+      anchor.set(s.p, a);
+    }
+    return list.sort((a, b) => anchor.get(a.p)! - anchor.get(b.p)! || a.d - b.d);
+  }
+
+  /** Where exactly a place is: always for stops and entrances, otherwise only when a place nearby shares its name. */
+  private placeDetail(p: Place): { short: string; long: string } {
+    let d = this.details.get(p.id);
+    if (d) return d;
+    const w = this.world!;
+    const spot = () => {
+      const ll = this.proj.toLatLon(p.x, p.y);
+      return locate(w, p.x, p.y, this.settings.units, drivesOnLeft(ll.lat, ll.lon), p.name);
+    };
+    if (STOPS.has(p.category)) d = stopDetail(p, spot());
+    else if (w.placesNear(p.x, p.y, 500).some(({ place: o }) => o !== p && o.name === p.name)) {
+      const s = p.info?.address ? null : spot();
+      const text = p.info?.address ? `at ${p.info.address}` : s ? spotText(s) : '';
+      d = { short: text, long: text };
+    } else d = { short: '', long: '' };
+    this.details.set(p.id, d);
+    return d;
+  }
+
+  /** "Green & Goodwin, bus stop, north-west corner" */
+  private placeText(p: Place, long = false): string {
+    const d = this.placeDetail(p)[long ? 'long' : 'short'];
+    return `${p.name}, ${p.category}${d ? `, ${d}` : ''}`;
+  }
+
+  /** Where to guide to for a place: its main door, the nearest station entrance, or the place itself. */
+  private targetFor(p: Place): Target {
+    const t: Target = { name: p.name, x: p.x, y: p.y, placeId: p.id, detail: this.placeDetail(p).long || undefined };
+    const nearer = (a: { x: number; y: number }, b: { x: number; y: number }) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y);
+    if (p.entrances?.length) {
+      const mains = p.entrances.filter((e) => e.main);
+      const e = [...(mains.length ? mains : p.entrances)].sort(nearer)[0];
+      const s = locate(this.world!, e.x, e.y, this.settings.units);
+      const access = e.wheelchair === 'yes' ? 'wheelchair accessible' : e.wheelchair === 'no' ? 'not wheelchair accessible' : '';
+      const what = `${e.label ?? (e.main ? 'main entrance' : 'entrance')}${s ? ` on ${s.street}` : ''}`;
+      return { ...t, x: e.x, y: e.y, detail: [what, access, t.detail].filter(Boolean).join(', ') };
+    }
+    if (p.category === 'station') {
+      const ent = this.world!.placesNear(p.x, p.y, 400)
+        .map((n) => n.place)
+        .filter((q) => q.category === 'station entrance' && (q.name === p.name || q.name === 'Station entrance'))
+        .sort(nearer)[0];
+      if (ent) {
+        const where = this.placeDetail(ent).long;
+        return { ...t, x: ent.x, y: ent.y, detail: `nearest entrance${where ? `: ${where}` : ''}` };
+      }
+    }
+    return t;
+  }
+
+  /** After choosing a stop: look up which lines call there and where they go. */
+  private async lookUpLines(t: Target) {
+    const node = this.world?.places.find((q) => q.id === t.placeId)?.info?.osmNode;
+    if (!node) return;
+    let text = this.stopLines.get(node);
+    if (text === undefined) {
+      try {
+        text = routesText(await fetchStopRoutes(node));
+      } catch {
+        return; // the stop's route_ref, if any, was already spoken
+      }
+      this.stopLines.set(node, text);
+    }
+    if (!text || this.dest !== t) return;
+    t.lines = text;
+    this.speech.say(text, 'normal');
   }
 
   /** E: everything for when you are lost: street, area, nearest landmark and nearest transit stop. */
   private async whereAmI() {
     const u = this.settings.units;
-    const at = (p: Place) => `${p.name}, ${p.category}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y)))}`;
+    const at = (p: Place) => `${this.placeText(p, true)}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y)))}`;
     const near = this.world!.placesNear(this.x, this.y, 400);
     const landmark = (near.find((n) => placeTier(n.place) >= 1) ?? near[0])?.place;
     const stop = this.transitStops()[0]?.p;
@@ -2680,9 +2801,109 @@ export class Game {
     const list = this.nearby(this.vehicle.scanRadius).slice(0, 6);
     if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
     const text = list
-      .map(({ place, d }) => `${place.name}, ${place.category}, ${fmtDistance(d, this.settings.units)} at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`)
+      .map(({ place, d }) => `${this.placeText(place)}, ${fmtDistance(d, this.settings.units)} at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`)
       .join('. ');
     this.speech.say(text + '.', 'high');
+  }
+
+  // ---------------- grid mode ----------------
+
+  private gridStepText(short = false): string {
+    const n = GRID_STEPS[this.gridStepIdx];
+    const imperial = this.settings.units === 'imperial';
+    if (short) return `${n} ${imperial ? 'yd' : 'm'}`;
+    return `${n} ${imperial ? 'yard' : 'metre'}${n === 1 ? '' : 's'}`;
+  }
+
+  private toggleGrid() {
+    if (this.grid) {
+      this.grid = null;
+      this.updateRoad(true);
+      return this.speech.say(`Grid mode off. Facing ${compass8(this.heading)}.`, 'high');
+    }
+    if (this.live) return this.speech.say('Live GPS is on. Shift L turns it off first.', 'high');
+    this.place(this.x, this.y, this.heading, null);
+    this.grid = { key: null, req: 0 };
+    void this.gridLook(true, `Grid mode, up is north. Arrows move ${this.gridStepText()}; minus and equals change the step. Space says where you are. F3 leaves.`);
+  }
+
+  /** Keys that work differently in grid mode; returns false for the rest. */
+  private gridCommand(c: Command): boolean {
+    const mv = GRID_MOVES[c.code];
+    if (mv) {
+      if (!c.ctrl && !c.alt) this.gridMove(mv[0], mv[1]);
+      return true;
+    }
+    switch (c.key) {
+      case ' ':
+        if (!c.repeat) this.gridDescribe(c.shift);
+        return true;
+      case '-':
+      case '_':
+      case '=':
+      case '+':
+        if (!c.repeat) this.gridResize(c.key === '-' || c.key === '_' ? -1 : 1);
+        return true;
+    }
+    return c.code === 'Slash';
+  }
+
+  private gridMove(dx: number, dy: number) {
+    const m = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
+    this.place(this.x + dx * m, this.y + dy * m, bearingTo(0, 0, dx, dy), null);
+    void this.gridLook(false);
+  }
+
+  private gridResize(dir: 1 | -1) {
+    const i = Math.max(0, Math.min(GRID_STEPS.length - 1, this.gridStepIdx + dir));
+    const lead = i !== this.gridStepIdx ? 'Step' : dir > 0 ? 'Largest step,' : 'Smallest step,';
+    this.gridStepIdx = i;
+    this.speech.say(`${lead} ${this.gridStepText()}.`, 'high');
+  }
+
+  /** Space: what is here. Shift Space adds the nearest street and the step size. */
+  private gridDescribe(detail: boolean) {
+    if (!detail) return void this.gridLook(true);
+    const u = this.settings.units;
+    const hit = this.world!.nearestRoad(this.x, this.y, 300, (w) => w.named);
+    let street = 'No named street nearby.';
+    if (hit && hit.hit.dist <= roadHalfWidth(hit.seg.way.type) + 1.5) street = '';
+    else if (hit) street = `${hit.seg.way.name} is ${fmtDistance(hit.hit.dist, u)} ${compass8(bearingTo(this.x, this.y, hit.hit.px, hit.hit.py))}.`;
+    void this.gridLook(true, '', ` ${street} Step ${this.gridStepText()}.`);
+  }
+
+  /** The road or path the traveller stands on, if any. */
+  private gridRoad(): Area | null {
+    const hit = this.world?.nearestRoad(this.x, this.y, 30);
+    if (!hit || hit.hit.dist > roadHalfWidth(hit.seg.way.type) + 1.5) return null;
+    const w = hit.seg.way;
+    return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
+  }
+
+  /** Play the sound for the ground here; say what it is when it is new, or always if asked. */
+  private async gridLook(always: boolean, prefix = '', suffix = '') {
+    const g = this.grid;
+    if (!g) return;
+    const req = ++g.req;
+    let area = this.gridRoad();
+    if (!area) {
+      try {
+        area = await this.areas.at(this.proj.toLatLon(this.x, this.y));
+      } catch {
+        area = null;
+      }
+      if (this.grid !== g || g.req !== req) return; // moved on meanwhile
+    }
+    if (!area) {
+      this.audio.error();
+      return this.speech.say(`${prefix} Could not load what is here.`.trim(), 'high');
+    }
+    this.audio.areaCue(area.sound);
+    const changed = area.key !== g.key;
+    g.key = area.key;
+    if (!always && !changed) return;
+    const loading = this.inLoadedArea(this.x, this.y) ? '' : ' Streets here are still loading.';
+    this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}`.trim(), 'high');
   }
 
   private sonar() {
@@ -2710,13 +2931,13 @@ export class Game {
     const d = dist(this.x, this.y, p.x, p.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y));
     this.audio.placeCue(p.group, rel, 0.3);
-    this.speech.say(`${p.name}, ${p.category}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}. ${b.idx + 1} of ${b.list.length}`, 'high');
+    this.speech.say(`${this.placeText(p)}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}. ${b.idx + 1} of ${b.list.length}`, 'high');
   }
 
   private setDestination() {
     if (!this.browse) return this.speech.say('Press Tab to choose a place first.', 'high');
     const p = this.browse.list[this.browse.idx];
-    this.setTarget({ name: p.name, x: p.x, y: p.y });
+    this.setTarget(this.targetFor(p));
   }
 
   setTarget(t: Target) {
@@ -2734,9 +2955,10 @@ export class Game {
     const d = dist(this.x, this.y, t.x, t.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y));
     const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter';
-    this.speech.say(`Destination ${t.name}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}.${guided ? '' : ' Follow the beacon.'}`, 'high');
+    this.speech.say(`Destination ${t.name}${t.detail ? `, ${t.detail}` : ''}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}.${guided ? '' : ' Follow the beacon.'}`, 'high');
     if (guided) void this.computeRoute(true);
     else this.clearRoute();
+    void this.lookUpLines(t);
   }
 
   /**
@@ -2765,6 +2987,9 @@ export class Game {
   /** Set a beacon destination from a search result (any distance, even outside the loaded map). */
   setTargetLatLon(name: string, lat: number, lon: number, radius = 0) {
     const p = this.proj.toXY(lat, lon);
+    // a loaded place of that name: aim for its door or entrance and say which corner
+    const known = this.world?.placesNear(p.x, p.y, 60).find((n) => n.place.name === name)?.place;
+    if (known) return this.setTarget({ ...this.targetFor(known), radius: Math.min(400, radius) });
     this.setTarget({ name, x: p.x, y: p.y, radius: Math.min(400, radius) });
   }
 
@@ -2779,7 +3004,8 @@ export class Game {
       .slice(0, 8)
       .map(({ p, d }) => {
         const ll = this.proj.toLatLon(p.x, p.y);
-        return { name: p.name, detail: `${p.category}, ${this.describeOffset(d, bearingTo(this.x, this.y, p.x, p.y))}`, lat: ll.lat, lon: ll.lon };
+        const spot = this.placeDetail(p).short;
+        return { name: p.name, detail: `${p.category}${spot ? `, ${spot}` : ''}, ${this.describeOffset(d, bearingTo(this.x, this.y, p.x, p.y))}`, lat: ll.lat, lon: ll.lon };
       });
   }
 
@@ -2900,13 +3126,15 @@ export class Game {
     const u = this.settings.units;
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     const b = bearingTo(this.x, this.y, this.dest.x, this.dest.y);
-    const straight = `${this.dest.name}, ${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
+    const t = this.dest;
+    const straight = `${t.name}${t.detail ? `, ${t.detail}` : ''}, ${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
+    const lines = t.lines ? ` ${t.lines}` : '';
     const r = this.route;
-    if (!r) return this.speech.say(`${straight}.`, 'high');
+    if (!r) return this.speech.say(`${straight}.${lines}`, 'high');
     const m = this.upcoming();
     const next = m && m.kind !== 'arrive' ? `${cap(this.stepText(m, this.dest.name))} in ${fmtDistance(m.d - this.routeProg, u)}. ` : '';
     const left = r.partial ? `${fmtDistance(r.length - this.routeProg, u)} of route loaded so far` : `${fmtDistance(r.length - this.routeProg, u)} to go`;
-    this.speech.say(`${next}${left}. ${straight} in a straight line.`, 'high');
+    this.speech.say(`${next}${left}. ${straight} in a straight line.${lines}`, 'high');
   }
 
   /** Y: save the destination, or else where you are, to recall in the Control + D / Control + J search. */
@@ -3048,7 +3276,7 @@ export class Game {
       heading: `${Math.round(this.heading)}° ${compass8(this.heading)}`,
       area: this.areaName,
       destination,
-      status: this.loading ? 'Loading map data…' : '',
+      status: this.loading ? 'Loading map data…' : this.grid ? `Grid mode · step ${this.gridStepText(true)}` : '',
     });
   }
 
