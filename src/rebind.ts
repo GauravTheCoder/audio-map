@@ -20,7 +20,7 @@ export function tryBind(id: ActionId, b: Binding, o: KeyOverrides): { ok: true }
 export function setupRebind(
   getKeys: () => KeyOverrides,
   setKeys: (o: KeyOverrides) => void,
-  say: (text: string) => void,
+  speak: (text: string) => void,
   onClose: () => void,
 ) {
   const dlg = document.getElementById('rebind') as HTMLDialogElement;
@@ -29,6 +29,14 @@ export function setupRebind(
   const reset = document.getElementById('rebind-reset') as HTMLButtonElement;
   // role=application makes NVDA/JAWS pass every key through instead of using it for browse-mode navigation
   const capture = document.getElementById('rebind-capture') as HTMLElement;
+  const status = document.getElementById('rebind-status') as HTMLElement;
+  let flip = false;
+  // A modal dialog makes the page's own live regions inert, so a screen reader only hears this one.
+  const say = (text: string) => {
+    speak(text);
+    flip = !flip;
+    status.textContent = flip ? text : `${text} `;
+  };
   let shown: Action[] = [];
   let active = 0;
   let pending: Action | null = null;
