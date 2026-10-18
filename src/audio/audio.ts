@@ -1,5 +1,6 @@
 // Web Audio engine: synthesized vehicle sounds, earcons and 3D (HRTF) positioned cues.
 
+import type { AreaSound } from '../areas';
 import type { PlaceGroup } from '../world';
 import type { VehicleId } from '../settings';
 
@@ -393,6 +394,60 @@ export class AudioEngine {
   deadEnd() {
     this.tone(392, { dur: 0.16, level: 0.16, type: 'triangle' });
     this.tone(262, { when: this.now + 0.17, dur: 0.3, level: 0.16, type: 'triangle' });
+  }
+
+  /** Grid mode: a short sound for the kind of ground you stepped onto. */
+  areaCue(kind: AreaSound) {
+    const t = this.now;
+    const m = this.master;
+    switch (kind) {
+      case 'road': // hard click on tarmac
+        this.noiseBurst(m, t, 0.04, 2500, 2, 0.45);
+        this.tone(180, { dur: 0.05, level: 0.15, type: 'square' });
+        break;
+      case 'path': // light footstep tap
+        this.noiseBurst(m, t, 0.05, 1200, 1.5, 0.3);
+        break;
+      case 'building': // knock on a door
+        this.tone(160, { dur: 0.08, level: 0.35, type: 'sine', glideTo: 110 });
+        this.tone(160, { when: t + 0.11, dur: 0.08, level: 0.35, type: 'sine', glideTo: 110 });
+        break;
+      case 'water': // drop
+        this.tone(500, { dur: 0.12, level: 0.25, type: 'sine', glideTo: 1400 });
+        this.noiseBurst(m, t + 0.04, 0.12, 900, 0.8, 0.12);
+        break;
+      case 'green': // rustle of leaves
+        this.noiseBurst(m, t, 0.18, 5000, 0.7, 0.18);
+        this.noiseBurst(m, t + 0.06, 0.12, 3500, 0.7, 0.12);
+        break;
+      case 'sport': // whistle
+        this.tone(2100, { dur: 0.14, level: 0.12, type: 'sine', glideTo: 2350 });
+        break;
+      case 'residential': // warm doorbell pair
+        this.tone(659, { dur: 0.12, level: 0.16, type: 'triangle' });
+        this.tone(523, { when: t + 0.1, dur: 0.16, level: 0.16, type: 'triangle' });
+        break;
+      case 'commercial': // till ding
+        this.tone(1568, { dur: 0.25, level: 0.13, type: 'sine' });
+        this.tone(1568 * 2.4, { dur: 0.12, level: 0.04, type: 'sine' });
+        break;
+      case 'industrial': // metal clank
+        this.tone(220, { dur: 0.12, level: 0.1, type: 'square' });
+        this.noiseBurst(m, t, 0.1, 1800, 12, 0.5);
+        break;
+      case 'civic': // soft chord
+        this.tone(523, { dur: 0.2, level: 0.12, type: 'sine' });
+        this.tone(784, { dur: 0.2, level: 0.1, type: 'sine' });
+        break;
+      case 'farm': // low hollow thud
+        this.tone(330, { dur: 0.14, level: 0.14, type: 'triangle', glideTo: 260 });
+        break;
+      case 'bare': // gritty crunch
+        this.noiseBurst(m, t, 0.09, 600, 0.6, 0.35);
+        break;
+      default: // open ground: a faint breath
+        this.noiseBurst(m, t, 0.12, 800, 0.5, 0.12);
+    }
   }
 
   streetChange() {

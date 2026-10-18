@@ -467,3 +467,90 @@ describe('roundabouts', () => {
     expect(g.ring).toBeNull();
   });
 });
+
+describe('grid mode', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  function gridSetup() {
+    const h = setup();
+    const at = vi.fn(async () => ({ key: 'park1', kind: 'park', name: 'Oak Park', sound: 'green' }));
+    h.g.areas = { at, has: () => true };
+    h.g.loadCenter = { x: 0, y: 0 };
+    return { ...h, at };
+  }
+
+  it('F3 turns it on and says what is here; F3 again turns it off', async () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    await flush();
+    expect(g.grid).not.toBeNull();
+    expect(said.at(-1)).toMatch(/^Grid mode, up is north\. .*Oak Street\.$/);
+    game.run('F3');
+    expect(g.grid).toBeNull();
+    expect(said.at(-1)).toMatch(/^Grid mode off/);
+  });
+
+  it('arrows step by compass direction, whatever the heading', async () => {
+    const { game, g } = gridSetup();
+    g.heading = 90;
+    game.run('F3');
+    game.run('ArrowUp');
+    expect(g.x).toBeCloseTo(0);
+    expect(g.y).toBeCloseTo(60);
+    game.run('ArrowRight');
+    expect(g.x).toBeCloseTo(10);
+    game.run('ArrowDown');
+    game.run('ArrowLeft');
+    expect(g.x).toBeCloseTo(0);
+    expect(g.y).toBeCloseTo(50);
+    expect(g.speed).toBe(0);
+  });
+
+  it('speaks an area only on entering it; Space repeats it', async () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    await flush();
+    game.run('ArrowRight'); // off Oak Street into the park
+    await flush();
+    expect(said.at(-1)).toBe('Oak Park.');
+    const n = said.length;
+    game.run('ArrowRight');
+    await flush();
+    expect(said.length).toBe(n);
+    game.run(' ');
+    await flush();
+    expect(said.at(-1)).toBe('Oak Park.');
+    expect(g.grid.key).toBe('park1');
+  });
+
+  it('minus and equals change the step between 1 and 1000', () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    game.run('=');
+    expect(said.at(-1)).toBe('Step 100 metres.');
+    game.run('=');
+    game.run('=');
+    expect(said.at(-1)).toBe('Largest step, 1000 metres.');
+    for (let i = 0; i < 4; i++) game.run('-');
+    expect(said.at(-1)).toBe('Smallest step, 1 metre.');
+    game.run('ArrowUp');
+    expect(g.y).toBeCloseTo(51);
+  });
+
+  it('uses yards with imperial units', () => {
+    const { game, said, g } = gridSetup();
+    g.settings.units = 'imperial';
+    game.run('F3');
+    game.run('=');
+    expect(said.at(-1)).toBe('Step 100 yards.');
+    game.run('ArrowUp');
+    expect(g.y).toBeCloseTo(50 + 91.44);
+  });
+
+  it('cannot start while live GPS is on', () => {
+    const { game, said, g } = gridSetup();
+    g.live = {};
+    game.run('F3');
+    expect(g.grid).toBeNull();
+    expect(said.at(-1)).toMatch(/Live GPS is on/);
+  });
+});
