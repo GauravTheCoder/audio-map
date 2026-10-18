@@ -90,7 +90,8 @@ export class Speech {
   /** An open modal dialog makes the page inert, so its messages go to a live region inside it. */
   private region(assertive: boolean): HTMLElement {
     const dlgs = document.querySelectorAll('dialog[open]');
-    const dlg = dlgs[dlgs.length - 1];
+    // the topmost modal is the one holding focus; document order says nothing about stacking
+    const dlg = [...dlgs].find((d) => d.contains(document.activeElement)) ?? dlgs[dlgs.length - 1];
     if (!dlg) return assertive ? this.assertive : this.polite;
     const kind = assertive ? 'assertive' : 'polite';
     const have = dlg.querySelector<HTMLElement>(`:scope > [data-live="${kind}"]`);
