@@ -4,7 +4,7 @@ import { AreaMap, areaText, type Area } from './areas';
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
-import { lookup } from './keymap';
+import { bindingsOf, lookup, type ActionId, type Binding } from './keymap';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
@@ -534,6 +534,10 @@ export class Game {
   run(key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) {
     const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : key;
     this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
+  }
+
+  keyFor(id: ActionId): Binding {
+    return bindingsOf(id, this.settings.keyBindings)[0];
   }
 
   hold(code: string, on: boolean) {
