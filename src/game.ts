@@ -25,6 +25,8 @@ import { departuresReport, transitous } from './transit';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
+/** seconds off the ring before the roundabout counts as left */
+const RING_EXIT_DELAY = 0.5;
 /** distances (m) at which progress toward the destination is spoken */
 export function minutesText(minutes: number): string {
   const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
@@ -1257,8 +1259,8 @@ export class Game {
     }
     if (!near) {
       if (r.offSince < 0) r.offSince = this.clock;
-      else {
-        // left it: the new street is announced as usual, and the soft blip plays once clear of the ring
+      else if (this.clock - r.offSince > RING_EXIT_DELAY) {
+        // off the ring for a moment, not just a swerve or a noisy fix, so it is left: the new street is announced as usual, and the soft blip plays once clear of the ring
         this.ring = null;
         this.inJunction = new Set(r.nodes.map((n) => n.id));
       }

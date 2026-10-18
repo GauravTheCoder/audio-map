@@ -500,6 +500,25 @@ describe('roundabouts', () => {
     }
     expect(g.ring).toBeNull();
   });
+
+  it('keeps the ring through a brief swerve off it', () => {
+    const { g } = setup('car');
+    g.world = ringWorld();
+    g.x = 25;
+    g.y = 0;
+    g.heading = 180;
+    g.speed = 5;
+    g.updateRoad(true);
+    g.updateRing();
+    g.x = 0;
+    g.y = 150;
+    g.updateRoad(true);
+    for (let i = 0; i < 3; i++) {
+      g.clock += 1 / 60;
+      g.updateRing();
+    }
+    expect(g.ring).not.toBeNull();
+  });
 });
 
 describe('grid mode', () => {
