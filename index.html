@@ -301,6 +301,7 @@
         </div>
         <p id="nav-status" class="hint" aria-live="polite"></p>
         <ul id="nav-results" class="results" aria-label="Destinations"></ul>
+        <button type="button" data-cancel>Close</button>
       </form>
     </dialog>
 
@@ -311,6 +312,7 @@
         <input id="palette-q" type="search" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" />
         <p id="palette-status" class="hint" aria-live="polite"></p>
         <ul id="palette-list" class="results" role="listbox" aria-label="Actions"></ul>
+        <button type="button" data-cancel>Close</button>
       </form>
     </dialog>
 
@@ -322,6 +324,7 @@
         <div id="rebind-capture" tabindex="-1" role="application" aria-label="Press the new key"></div>
         <ul id="rebind-list" class="results" role="listbox" aria-label="Actions"></ul>
         <button type="button" id="rebind-reset">Reset all keys to defaults</button>
+        <button type="button" data-cancel>Close</button>
       </form>
     </dialog>
 
@@ -347,6 +350,7 @@
           <input id="note-text" type="text" autocomplete="off" placeholder="e.g. steep kerb, door on the left" />
           <button type="submit" id="note-save">Save note</button>
         </div>
+        <button type="button" data-cancel>Cancel</button>
       </form>
     </dialog>
 
@@ -360,6 +364,7 @@
             <input id="osmnote-text" type="text" autocomplete="off" placeholder="e.g. footpath missing here" />
             <button type="submit" id="osmnote-review">Review</button>
           </div>
+          <button type="button" data-cancel>Cancel</button>
         </div>
         <div id="osmnote-confirm" hidden>
           <p id="osmnote-summary" tabindex="-1"></p>

@@ -612,3 +612,8 @@ openMenu('main');
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
+
+// A button for the dialogs that otherwise close only with Escape (touch); it cancels the way Escape does.
+for (const b of document.querySelectorAll<HTMLButtonElement>('dialog [data-cancel]')) {
+  b.addEventListener('click', () => b.closest('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })));
+}
