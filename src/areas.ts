@@ -36,15 +36,48 @@ export interface AreaPoly {
   /** in square tile units; the smallest area containing a point is the most specific */
   size: number;
   name?: string;
+  /** the label classes that can name it (a university from a university, a park from a park); any for a building */
+  namedBy?: string[];
   /** name found from the labels inside it (null: none), worked out on first use */
   labelled?: string | null;
+}
+
+export interface Label {
+  x: number;
+  y: number;
+  name: string;
+  rank: number;
+  /** its class and subclass in the tiles, e.g. "college" and "university" */
+  cls: string;
+  sub: string;
 }
 
 export interface AreaTile {
   polys: AreaPoly[];
   /** named points (shops, parks, lakes), used to name the area they sit in */
-  labels: { x: number; y: number; name: string; rank: number }[];
+  labels: Label[];
 }
+
+/** Points that are on or beside a building or campus rather than what it is called: stops, entrances, lakes. */
+const NOT_A_NAME = new Set(['bus', 'railway', 'aerialway', 'entrance', 'ferry_terminal', 'water']);
+
+function canName(p: AreaPoly, l: Label): boolean {
+  return p.namedBy ? p.namedBy.includes(l.cls) : !NOT_A_NAME.has(l.cls);
+}
+
+/** Label classes that name each kind of ground; the rest (homes, shops, industry) stay unnamed. */
+const LANDUSE_LABEL: Record<string, string[]> = {
+  school: ['school'],
+  kindergarten: ['school'],
+  college: ['college'],
+  university: ['college'],
+  hospital: ['hospital'],
+  cemetery: ['cemetery'],
+  stadium: ['stadium'],
+  zoo: ['zoo'],
+  pitch: ['pitch'],
+  playground: ['playground'],
+};
 
 const COVER: Record<string, [string, AreaSound]> = {
   park: ['park', 'green'],
@@ -119,7 +152,24 @@ export function inRings(rings: Pt[][], x: number, y: number): boolean {
   return inside;
 }
 
-export function makePoly(id: string, kind: string, sound: AreaSound, rings: Pt[][], name?: string): AreaPoly {
+/**
+ * The tiles merge alike areas (all of a campus, a street of buildings) into one feature. Split it
+ * into each outline with its holes: an outline turns the same way as the first, a hole the other way.
+ */
+export function splitPolygons(rings: Pt[][]): Pt[][][] {
+  const out: Pt[][][] = [];
+  let sign = 0;
+  for (const r of rings) {
+    const a = ringArea(r);
+    if (!a) continue;
+    sign ||= Math.sign(a);
+    if (Math.sign(a) === sign) out.push([r]);
+    else out[out.length - 1]?.push(r);
+  }
+  return out;
+}
+
+export function makePoly(id: string, kind: string, sound: AreaSound, rings: Pt[][], name?: string, namedBy?: string[]): AreaPoly {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -132,7 +182,7 @@ export function makePoly(id: string, kind: string, sound: AreaSound, rings: Pt[]
       maxY = Math.max(maxY, p.y);
     }
   const size = Math.abs(rings.reduce((s, r) => s + ringArea(r), 0));
-  return { id, kind, sound, building: sound === 'building', rings, minX, minY, maxX, maxY, size, name };
+  return { id, kind, sound, building: sound === 'building', rings, minX, minY, maxX, maxY, size, name, namedBy };
 }
 
 function readTile(vt: VectorTile): AreaTile {
@@ -145,39 +195,47 @@ function readTile(vt: VectorTile): AreaTile {
       fn(f.properties, () => f.loadGeometry(), i, f.type);
     }
   };
+  const add = (id: string, kind: string, sound: AreaSound, rings: Pt[][], name?: string, namedBy?: string[]) =>
+    splitPolygons(rings).forEach((part, k) => polys.push(makePoly(`${id}.${k}`, kind, sound, part, name, namedBy)));
   each('building', (_p, rings, i, type) => {
-    if (type === 3) polys.push(makePoly(`b${i}`, 'building', 'building', rings()));
+    if (type === 3) add(`b${i}`, 'building', 'building', rings());
   });
   each('water', (p, rings, i, type) => {
-    if (type === 3) polys.push(makePoly(`w${i}`, WATER[String(p.class)] ?? 'water', 'water', rings()));
+    const cls = String(p.class ?? '');
+    if (type === 3) add(`w${i}`, WATER[cls] ?? 'water', 'water', rings(), undefined, ['water']);
   });
   each('landcover', (p, rings, i, type) => {
-    const c = COVER[String(p.subclass ?? '')] ?? COVER[String(p.class ?? '')];
-    if (type === 3 && c) polys.push(makePoly(`c${i}`, c[0], c[1], rings()));
+    const sub = String(p.subclass ?? '');
+    const cls = String(p.class ?? '');
+    const c = COVER[sub] ?? COVER[cls];
+    if (type === 3 && c) add(`c${i}`, c[0], c[1], rings(), undefined, sub === 'park' || sub === 'garden' ? ['park', 'garden'] : []);
   });
   each('landuse', (p, rings, i, type) => {
-    const c = LANDUSE[String(p.class ?? '')];
-    if (type === 3 && c) polys.push(makePoly(`u${i}`, c[0], c[1], rings()));
+    const cls = String(p.class ?? '');
+    const c = LANDUSE[cls];
+    if (type === 3 && c) add(`u${i}`, c[0], c[1], rings(), undefined, LANDUSE_LABEL[cls] ?? []);
   });
   each('park', (p, rings, i, type) => {
     const cls = String(p.class ?? '');
-    if (type === 3 && PARK.has(cls)) polys.push(makePoly(`p${i}`, humanize(cls), 'green', rings(), p.name ? String(p.name) : undefined));
+    if (type === 3 && PARK.has(cls)) add(`p${i}`, humanize(cls), 'green', rings(), p.name ? String(p.name) : undefined, []);
   });
-  for (const layer of ['poi', 'water_name']) {
-    each(layer, (p, rings, _i, type) => {
-      const q = rings()[0]?.[0];
-      if (type === 1 && q && p.name) labels.push({ x: q.x, y: q.y, name: String(p.name), rank: Number(p.rank ?? 0) });
-    });
-  }
+  each('poi', (p, rings, _i, type) => {
+    const q = rings()[0]?.[0];
+    if (type === 1 && q && p.name) labels.push({ x: q.x, y: q.y, name: String(p.name), rank: Number(p.rank ?? 0), cls: String(p.class ?? ''), sub: String(p.subclass ?? '') });
+  });
+  each('water_name', (p, rings, _i, type) => {
+    const q = rings()[0]?.[0];
+    if (type === 1 && q && p.name) labels.push({ x: q.x, y: q.y, name: String(p.name), rank: 0, cls: 'water', sub: String(p.class ?? '') });
+  });
   labels.sort((a, b) => a.rank - b.rank);
   return { polys, labels };
 }
 
 /** A building if (x, y) is in one, otherwise the smallest area around it. */
-function innermost(tile: AreaTile, x: number, y: number): AreaPoly | null {
+function innermost(tile: AreaTile, x: number, y: number, buildings = true): AreaPoly | null {
   let best: AreaPoly | null = null;
   for (const p of tile.polys) {
-    if (x < p.minX || x > p.maxX || y < p.minY || y > p.maxY || !inRings(p.rings, x, y)) continue;
+    if ((!buildings && p.building) || x < p.minX || x > p.maxX || y < p.minY || y > p.maxY || !inRings(p.rings, x, y)) continue;
     if (!best || (p.building && !best.building) || (p.building === best.building && p.size < best.size)) best = p;
   }
   return best;
@@ -189,7 +247,10 @@ export function pickArea(tile: AreaTile, tileKey: string, x: number, y: number):
   if (!b) return { key: 'open', kind: 'open ground', sound: 'open' };
   if (b.labelled === undefined) {
     const inside = (l: { x: number; y: number }) => l.x >= b.minX && l.x <= b.maxX && l.y >= b.minY && l.y <= b.maxY && inRings(b.rings, l.x, l.y);
-    b.labelled = tile.labels.find((l) => inside(l) && innermost(tile, l.x, l.y) === b)?.name ?? null;
+    // a university's label may sit in one of its buildings: it still names the grounds
+    const names = new Set(tile.labels.filter((l) => canName(b, l) && inside(l) && innermost(tile, l.x, l.y, b.building) === b).map((l) => l.name));
+    // a building takes its best-known occupant; grounds only an unambiguous name (a campus has many)
+    b.labelled = b.building ? ([...names][0] ?? null) : names.size === 1 ? [...names][0] : null;
   }
   return { key: `${tileKey}/${b.id}`, kind: b.kind, name: b.name ?? b.labelled ?? undefined, sound: b.sound };
 }
