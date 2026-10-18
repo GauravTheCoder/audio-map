@@ -21,7 +21,7 @@ import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
-import { conditionsReport } from './weather';
+import { conditionsReport, isDark } from './weather';
 import { departuresReport, transitous } from './transit';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
@@ -1475,6 +1475,18 @@ export class Game {
     return parts.join('; ');
   }
 
+  private dark = false;
+  private darkCheckedAt = -Infinity;
+
+  /** Daylight is looked up at most every ten minutes, and only once an unlit path is close. */
+  private isDarkNow(): boolean {
+    if (this.clock - this.darkCheckedAt > 600) {
+      this.darkCheckedAt = this.clock;
+      void isDark(this.proj.toLatLon(this.x, this.y)).then((d) => (this.dark = d));
+    }
+    return this.dark;
+  }
+
   /** Crossings and steps just ahead, for walkers and cyclists. */
   private checkHazards() {
     if (!this.settings.announceHazards || this.speed < 0.3 || (this.vehicle.id !== 'walker' && this.vehicle.id !== 'bicycle')) return;
@@ -1482,6 +1494,7 @@ export class Game {
     for (const { hazard: h, d } of this.world!.hazardsNear(this.x, this.y, reach)) {
       if (Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y))) > 35) continue;
       if (h.text === 'Steps' && this.road?.type === 'steps') continue;
+      if (h.text === 'Unlit path' && !this.isDarkNow()) continue;
       const key = `${h.text}|${Math.round(h.x)},${Math.round(h.y)}`;
       if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
       this.announcedHazards.set(key, this.clock);

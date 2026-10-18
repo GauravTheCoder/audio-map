@@ -336,6 +336,7 @@ export class World {
       for (const m of this.nodesNear(n.x, n.y, 30)) if (m.edges.length >= 3) m.signals = true;
     }
     for (const c of raw.crossings ?? []) this.addHazard(c.text, c, c.extras);
+    for (const u of raw.unlit ?? []) this.addHazard('Unlit path', u);
     const proj = this.proj;
     for (const a of raw.access ?? []) this.access.push({ kind: a.kind, name: a.name, ...proj.toXY(a.lat, a.lon) });
     const seen = new Set<string>();

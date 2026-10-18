@@ -33,6 +33,8 @@ export interface RawPlaces {
   crossings?: { lat: number; lon: number; text: string; extras?: string[] }[];
   /** entrances, platforms and lifts, for finding your way in stations and buildings */
   access?: { lat: number; lon: number; kind: AccessKind; name?: string }[];
+  /** where a path tagged lit=no begins; only an explicit tag counts, since most paths carry none */
+  unlit?: LatLon[];
 }
 
 export type AccessKind = 'entrance' | 'platform' | 'lift';
@@ -157,7 +159,9 @@ out qt;
   node["highway"="elevator"];
   node["elevator"="yes"];
 );
-out center tags qt;`;
+out center tags qt;
+way["highway"~"^(footway|path|cycleway|track|pedestrian|steps)$"]["lit"="no"];
+out geom qt;`;
   return parsePlaces(await overpass(q, signal, onRetry));
 }
 
@@ -179,6 +183,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
   const signals = new Set<number>();
   const crossings: NonNullable<RawPlaces['crossings']> = [];
   const access: NonNullable<RawPlaces['access']> = [];
+  const unlit: LatLon[] = [];
   // door node id -> places whose outline it is on
   const doorOf = new Map<number, RawPlace[]>();
   const doors: OverpassEl[] = [];
@@ -188,6 +193,10 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     const t = el.tags;
     if (!t || seen.has(el.type + el.id)) continue;
     seen.add(el.type + el.id);
+    if (el.type === 'way' && t.lit === 'no' && el.geometry?.length) {
+      unlit.push(el.geometry[0]);
+      continue;
+    }
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat === undefined || lon === undefined) continue;
@@ -227,7 +236,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     if (SKIP_DOOR.test(d.tags!.entrance)) continue;
     for (const p of doorOf.get(d.id) ?? []) (p.entrances ??= []).push({ lat: d.lat!, lon: d.lon!, tags: d.tags! });
   }
-  return { places, signals, crossings, access };
+  return { places, signals, crossings, access, unlit };
 }
 
 /** A named building or piece of ground, with its outline (for grid mode, where the tiles carry no names). */

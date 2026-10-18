@@ -1002,6 +1002,20 @@ describe('phone screen', () => {
     vi.mocked(URL.revokeObjectURL).mockRestore();
   });
 
+  it('warns about an unlit path ahead only when it is dark', () => {
+    const { g, said } = setup();
+    const start = ll(0, 70);
+    g.world.addPlaces({ places: [], signals: new Set<number>(), unlit: [start] });
+    g.speed = 1.4;
+    g.darkCheckedAt = g.clock;
+    g.dark = false;
+    g.checkHazards();
+    expect(said).toEqual([]);
+    g.dark = true;
+    g.checkHazards();
+    expect(said.at(-1)).toMatch(/^Unlit path ahead, 20 metres/);
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');

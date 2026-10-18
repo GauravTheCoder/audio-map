@@ -101,3 +101,11 @@ describe('parseNamedAreas', () => {
     ]);
   });
 });
+
+describe('unlit paths', () => {
+  it('keeps the start of a footway tagged lit=no and ignores paths with no or a yes tag', () => {
+    const way = (id: number, tags: Record<string, string>) => ({ type: 'way' as const, id, tags: { highway: 'footway', ...tags }, geometry: [{ lat: 51, lon: 0 }, { lat: 51.001, lon: 0 }] });
+    const raw = parsePlaces([way(1, { lit: 'no' }), way(2, { lit: 'yes' }), way(3, {})]);
+    expect(raw.unlit).toEqual([{ lat: 51, lon: 0 }]);
+  });
+});
