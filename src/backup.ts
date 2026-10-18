@@ -33,7 +33,7 @@ const ENUMS: Record<string, readonly string[]> = {
   walkRoute: ['shortest', 'streets'],
   soundProfile: ['full', 'simple', 'minimal', 'custom'],
 };
-const BOOLS = ['announcePlaces', 'announceHazards', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'];
+const BOOLS = ['announcePlaces', 'announceHazards', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute'];
 const GROUPS = ['food', 'shop', 'transport', 'culture', 'nature', 'health', 'service', 'other'];
 const VEHICLES = ENUMS.vehicle;
 const PROFILES = ENUMS.soundProfile;

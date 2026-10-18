@@ -27,6 +27,8 @@ export interface Settings {
   headingUpMap: boolean;
   display: DisplayMode;
   walkRoute: WalkRoute;
+  /** walking routes avoid steps and steep slopes */
+  accessibleRoute: boolean;
   soundProfile: SoundProfile;
   customSound: CustomSound;
   /** the profile last chosen while using each vehicle */
@@ -55,6 +57,7 @@ const DEFAULTS: Settings = {
   headingUpMap: true,
   display: 'highContrast',
   walkRoute: 'shortest',
+  accessibleRoute: false,
   soundProfile: 'simple',
   customSound: { places: 'notable', sideStreets: true, extras: true },
   vehicleProfiles: {},

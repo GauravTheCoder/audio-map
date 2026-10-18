@@ -1,7 +1,7 @@
 // The explorable world: road graph, spatial indexes and named places in local metres.
 
 import { Projection, bearing, dist, pointSeg, relAngle, type LatLon, type SegHit } from './geo';
-import type { RawPlaces, RawRoads } from './osm';
+import type { AccessKind, RawPlaces, RawRoads } from './osm';
 
 export interface Way {
   id: number;
@@ -235,6 +235,7 @@ export class World {
   readonly nodes = new Map<number, GNode>();
   readonly ways: Way[] = [];
   readonly places: Place[] = [];
+  readonly access: { kind: AccessKind; name?: string; x: number; y: number }[] = [];
   private segGrid = new Grid<Segment>(60);
   private nodeGrid = new Grid<GNode>(80);
   private placeGrid = new Grid<Place>(100);
@@ -336,6 +337,7 @@ export class World {
     }
     for (const c of raw.crossings ?? []) this.addHazard(c.text, c, c.extras);
     const proj = this.proj;
+    for (const a of raw.access ?? []) this.access.push({ kind: a.kind, name: a.name, ...proj.toXY(a.lat, a.lon) });
     const seen = new Set<string>();
     for (const rp of raw.places) {
       const key = `${rp.tags.name}|${rp.lat.toFixed(4)}|${rp.lon.toFixed(4)}`;
