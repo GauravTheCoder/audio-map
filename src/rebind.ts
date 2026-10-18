@@ -7,11 +7,11 @@ const MODIFIER_KEYS = ['Shift', 'Alt', 'Meta', 'AltGraph'];
 
 /** What pressing `b` for `id` does: the binding to save, or the reason it is refused. */
 export function tryBind(id: ActionId, b: Binding, o: KeyOverrides): { ok: true } | { ok: false; why: string } {
-  if (isReserved(b)) return { ok: false, why: `${describeBinding(b)} is reserved. Press another key.` };
+  if (isReserved(b)) return { ok: false, why: `Error: ${describeBinding(b)} is reserved.` };
   const other = conflict(id, b, o);
   if (other) {
     const name = ACTIONS.find((x) => x.id === other)?.name ?? other;
-    return { ok: false, why: `${describeBinding(b)} is already used for ${name}. Press another key.` };
+    return { ok: false, why: `Error: key conflict with ${name}.` };
   }
   return { ok: true };
 }
@@ -30,6 +30,7 @@ export function setupRebind(
   let shown: Action[] = [];
   let active = 0;
   let pending: Action | null = null;
+  let candidate: Binding | null = null;
 
   const mark = () => {
     list.querySelectorAll('li').forEach((li, i) => li.setAttribute('aria-selected', String(i === active)));
@@ -53,6 +54,7 @@ export function setupRebind(
   };
   const ask = (x: Action) => {
     pending = x;
+    candidate = null;
     say(`${x.name}, now ${x.label}. Press the new key, or Escape to cancel.`);
   };
 
@@ -64,18 +66,28 @@ export function setupRebind(
       e.stopPropagation();
       if (e.key === 'Escape') {
         pending = null;
+        candidate = null;
         say('Cancelled.');
         return;
       }
+      if (candidate && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        setKeys({ ...getKeys(), [pending.id!]: candidate });
+        say(`New key set: ${pending.name} is now ${describeBinding(candidate)}.`);
+        pending = null;
+        candidate = null;
+        render();
+        return;
+      }
       if (MODIFIER_KEYS.includes(e.key)) return;
-      if (e.altKey) return say('Alt combinations are not supported. Press another key.');
+      if (e.altKey) return say('Error: Alt combinations are not supported.');
       const b: Binding = { key: e.key.length === 1 ? e.key.toLowerCase() : e.key, shift: e.shiftKey, ctrl: e.ctrlKey };
       const r = tryBind(pending.id!, b, getKeys());
-      if (!r.ok) return say(r.why);
-      setKeys({ ...getKeys(), [pending.id!]: b });
-      say(`${pending.name} is now ${describeBinding(b)}.`);
-      pending = null;
-      render();
+      if (!r.ok) {
+        candidate = null;
+        return say(`${r.why} Press another key, or Escape to cancel.`);
+      }
+      candidate = b;
+      say(`${describeBinding(b)}. Press Enter to set it, or press another key.`);
     },
     true,
   );
@@ -93,6 +105,7 @@ export function setupRebind(
   });
   reset.addEventListener('click', () => {
     pending = null;
+    candidate = null;
     setKeys({});
     say('All keys are back to their defaults.');
     render();
