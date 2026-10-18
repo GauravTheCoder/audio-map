@@ -498,6 +498,7 @@ export class Game {
 
   pause() {
     this.paused = true;
+    this.calibrationTimers.forEach(clearTimeout);
     this.speed = 0;
     this.audio.update({ speed: 0, maxSpeed: 1, throttle: 0, surface: 'paved', tunnel: false }, STEP);
     this.audio.setRumble(0, 0, 10);
@@ -2092,9 +2093,11 @@ export class Game {
   private calibrate() {
     this.calibrationTimers.forEach(clearTimeout);
     this.speech.say('Headphone check. You should hear each tone from the side named.', 'high');
+    // timed for the default rate; a slower built-in voice needs longer so "Left" does not cut off the intro
+    const slow = this.settings.speechMode === 'voice' ? Math.max(1, 1.3 / this.settings.voiceRate) : 1;
     this.calibrationTimers = ([['Left', -90], ['Right', 90], ['Ahead', 0]] as const).flatMap(([word, rel], i) => [
-      window.setTimeout(() => this.speech.say(word, 'high'), 4000 + i * 2200),
-      window.setTimeout(() => this.audio.testTone(rel), 4800 + i * 2200),
+      window.setTimeout(() => this.speech.say(word, 'high'), (4000 + i * 2200) * slow),
+      window.setTimeout(() => this.audio.testTone(rel), (4000 + i * 2200) * slow + 800),
     ]);
   }
 
