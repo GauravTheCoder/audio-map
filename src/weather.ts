@@ -40,6 +40,7 @@ async function load(p: LatLon, units: Units): Promise<Forecast> {
   const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT) });
   if (!res.ok) throw new Error(String(res.status));
   const data = (await res.json()) as Forecast;
+  if (!data?.current || !Array.isArray(data.daily?.sunset) || !Array.isArray(data.daily?.sunrise)) throw new Error('unexpected forecast');
   cache.set(key, { at: Date.now(), data });
   return data;
 }
