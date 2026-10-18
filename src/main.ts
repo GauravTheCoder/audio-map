@@ -35,7 +35,7 @@ let selected: Selected = loadPlace() ?? { name: 'Times Square, New York', lat: 4
 function parseShared(): { from: Selected; to?: Selected } | null {
   const pt = (v: string | null): Selected | undefined => {
     const [lat, lon, ...rest] = (v ?? '').split(',');
-    const p = { lat: Number(lat), lon: Number(lon), name: decodeURIComponent(rest.join(',')) || 'Shared place' };
+    const p = { lat: Number(lat), lon: Number(lon), name: rest.join(',') || 'Shared place' };
     return lat && lon && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180 ? p : undefined;
   };
   try {
