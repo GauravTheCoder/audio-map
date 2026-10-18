@@ -171,7 +171,8 @@ export class Game {
   private gpsPoor = false;
   private restartingForGps = false;
   /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
-  private grid: { key: string | null; req: number } | null = null;
+  /** key: the area last spoken; turn: the route turn last pointed to, to notice reaching it */
+  private grid: { key: string | null; req: number; turn?: Maneuver } | null = null;
   private gridStepIdx = 1;
   private areas = new AreaMap();
   /** what to say about each place's exact spot, worked out on first use (reset with the map) */
@@ -1803,6 +1804,13 @@ export class Game {
               : 'No route found; follow the beacon.';
       return this.speech.say(why, 'high');
     }
+    if (this.grid) {
+      const g = this.grid;
+      const turn = g.turn;
+      const hint = this.gridRouteHint();
+      g.turn = turn; // asking again is not reaching the turn
+      return this.speech.say(hint.replace(/^At the turn\. /, '') || `Arriving at ${this.dest.name}.`, 'high');
+    }
     const u = this.settings.units;
     const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m));
     if (!steps.length) {
@@ -2977,7 +2985,65 @@ export class Game {
     g.key = area.key;
     if (!always && !changed) return;
     const loading = this.inLoadedArea(this.x, this.y) ? '' : ' Streets here are still loading.';
-    this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}`.trim(), 'high');
+    const route = this.gridRouteHint();
+    this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}${route ? ` ${route}` : ''}`.trim(), 'high');
+  }
+
+  /** A grid distance in the grid's own unit (metres, or yards with imperial units), so steps can be counted. */
+  private gridDistance(m: number): string {
+    const imperial = this.settings.units === 'imperial';
+    const v = imperial ? m / 0.9144 : m;
+    if (!imperial && v >= 1000) return `${(v / 1000).toFixed(1)} kilometres`;
+    const n = v < 50 ? Math.round(v) : v < 500 ? Math.round(v / 10) * 10 : Math.round(v / 50) * 50;
+    return `${n} ${imperial ? 'yard' : 'metre'}${n === 1 ? '' : 's'}`;
+  }
+
+  /** "80 metres north and 10 metres east": how far to step each way to reach a point. */
+  private gridOffset(x: number, y: number): string {
+    const dx = x - this.x;
+    const dy = y - this.y;
+    const min = this.settings.units === 'imperial' ? 0.9144 / 2 : 0.5; // under half the smallest step
+    const parts: string[] = [];
+    if (Math.abs(dy) >= min) parts.push(`${this.gridDistance(Math.abs(dy))} ${dy > 0 ? 'north' : 'south'}`);
+    if (Math.abs(dx) >= min) parts.push(`${this.gridDistance(Math.abs(dx))} ${dx > 0 ? 'east' : 'west'}`);
+    return parts.join(' and ');
+  }
+
+  /**
+   * Turn by turn for grid mode: how far north or south and east or west the next turn is, and which
+   * way the route heads from there. "Next turn 80 metres north and 10 metres east, then east on Green Street."
+   * Off the route, the same figures lead back to it.
+   */
+  private gridRouteHint(): string {
+    const g = this.grid;
+    const r = this.route;
+    if (!g || !r || !this.dest || !this.settings.turnByTurn) return '';
+    // a turn this close counts as reached: as close as the step can land (10 m steps: within ~7 m), at most 8 m.
+    // With bigger steps the count goes on, so the step can be made smaller to get there.
+    const step = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
+    const reach = Math.min(8, Math.max(1.5, step * 0.75));
+    let next: Maneuver | undefined;
+    for (let i = this.nextRealIndex(this.nextMan); i < r.maneuvers.length; i = this.nextRealIndex(i + 1)) {
+      const m = r.maneuvers[i];
+      if (m.kind === 'arrive' && r.partial) break;
+      if (dist(this.x, this.y, m.x, m.y) > reach) {
+        next = m;
+        break;
+      }
+    }
+    // standing at the turn last pointed to (not just stepping back along the route, which also changes it)
+    const reached = !!g.turn && g.turn !== next && dist(this.x, this.y, g.turn.x, g.turn.y) <= reach;
+    g.turn = next;
+    const lead = reached ? 'At the turn. ' : '';
+    if (!next) return r.partial ? `${lead}The route continues as more map loads.` : '';
+    const off = this.gridOffset(next.x, next.y);
+    if (next.kind === 'arrive') return `${lead}${this.dest.name} ${off}.`;
+    // the way the route heads once round the turn
+    const after = pointAlong(r, next.d + 20);
+    const heads = compass8(bearingTo(next.x, next.y, after.x, after.y));
+    this.stepText(next, this.dest.name); // names an unnamed path after the street beside it, if known
+    const onto = next.ontoNamed || next.onto.startsWith('path along') ? next.onto : `the ${next.onto}`;
+    return `${lead}Next turn ${off}, then ${heads} on ${onto}.`;
   }
 
   private sonar() {
