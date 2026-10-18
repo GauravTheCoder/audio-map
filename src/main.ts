@@ -475,7 +475,8 @@ const openPalette = setupPalette(
     game?.focus(stage);
   },
   (x) => {
-    if (x.key.startsWith('theme:')) game?.setTheme(x.key.slice(6) as Settings['soundTheme']);
+    // the palette has just closed and focus is moving back to the stage; NVDA drops a message spoken in that moment
+    if (x.key.startsWith('theme:')) setTimeout(() => game?.setTheme(x.key.slice(6) as Settings['soundTheme']), 300);
     else game?.run(x.key, x);
   },
 );
