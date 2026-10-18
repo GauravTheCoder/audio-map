@@ -56,17 +56,7 @@ export function dist(ax: number, ay: number, bx: number, by: number): number {
   return Math.hypot(bx - ax, by - ay);
 }
 
-const COMPASS_16 = [
-  'north', 'north-north-east', 'north-east', 'east-north-east',
-  'east', 'east-south-east', 'south-east', 'south-south-east',
-  'south', 'south-south-west', 'south-west', 'west-south-west',
-  'west', 'west-north-west', 'north-west', 'north-north-west',
-];
 const COMPASS_8 = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
-
-export function compass16(deg: number): string {
-  return COMPASS_16[Math.round(normDeg(deg) / 22.5) % 16];
-}
 
 export function compass8(deg: number): string {
   return COMPASS_8[Math.round(normDeg(deg) / 45) % 8];
