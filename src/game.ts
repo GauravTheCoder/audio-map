@@ -171,8 +171,8 @@ export class Game {
   private gpsPoor = false;
   private restartingForGps = false;
   /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
-  /** key: the area last spoken; turn: the route turn last pointed to, to notice reaching it */
-  private grid: { key: string | null; req: number; turn?: Maneuver; dir?: number } | null = null;
+  /** key: the area last spoken; dir: the way the last arrow stepped, where N looks */
+  private grid: { key: string | null; req: number; dir?: number } | null = null;
   private gridStepIdx = 1;
   private areas = new AreaMap();
   /** what to say about each place's exact spot, worked out on first use (reset with the map) */
@@ -447,7 +447,7 @@ export class Game {
       if (this.world) this.swapWorld(world);
       else this.world = world;
       installed = true;
-      if (this.dest && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
+      if (this.dest && !this.grid && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
       this.loadCenter = at;
       // the area name is nice to have, not worth holding up the start for
       const area = await Promise.race([areaP, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
@@ -1767,11 +1767,6 @@ export class Game {
     const walker = this.vehicle.id === 'walker';
     const kind = `${walker && this.settings.accessibleRoute ? 'Accessible ' : ''}${walker && this.settings.walkRoute === 'streets' ? 'street route' : 'route'}`.replace(/^./, (ch) => ch.toUpperCase());
     const lead = `${kind} ${fmtDistance(r.length, u)}${r.partial ? ', as far as the map has loaded; it will extend as you go' : ''}. `;
-    if (this.grid) {
-      // no way you are facing in grid mode: say where the first turn is instead of "turn left"
-      this.grid.turn = undefined;
-      return this.speech.say(lead + this.gridRouteHint(), 'normal');
-    }
     const step =
       first.kind === 'arrive'
         ? r.partial
@@ -1793,6 +1788,7 @@ export class Game {
     const double = now - this.lastIPress < 400;
     this.lastIPress = double ? -Infinity : now; // a third quick press starts over
     if (!this.dest) return this.speech.say(`No destination. Press ${this.keyText('navigate')} to choose one.`, 'high');
+    if (this.grid) return this.speech.say(`Turn by turn pauses in grid mode. ${this.dest.name} is ${this.gridOffset(this.dest.x, this.dest.y)}; follow the beacon.`, 'high');
     const r = this.route;
     if (!r) {
       const why = !this.settings.turnByTurn
@@ -1807,13 +1803,6 @@ export class Game {
               ? `The route planner is unavailable and ${this.dest.name} is too far to plan offline. Follow the beacon.`
               : 'No route found; follow the beacon.';
       return this.speech.say(why, 'high');
-    }
-    if (this.grid) {
-      const g = this.grid;
-      const turn = g.turn;
-      const hint = this.gridRouteHint();
-      g.turn = turn; // asking again is not reaching the turn
-      return this.speech.say(hint.replace(/^At the turn\. /, '') || `Arriving at ${this.dest.name}.`, 'high');
     }
     const u = this.settings.units;
     const steps = r.maneuvers.slice(this.nextMan).filter((m) => !(m.kind === 'arrive' && r.partial) && !this.isTrivial(m));
@@ -2897,7 +2886,10 @@ export class Game {
       if (hit && hit.hit.dist <= roadHalfWidth(hit.seg.way.type) + 4) this.place(hit.hit.px, hit.hit.py, Math.abs(relAngle(0, hit.dir)) <= 90 ? hit.dir : hit.dir + 180, null);
       else this.updateRoad(true);
       const on = this.streetName ? `On ${this.streetName}, facing` : 'Facing';
-      return this.speech.say(`Grid mode off. ${on} ${compass8(this.heading)}.`, 'high');
+      this.speech.say(`Grid mode off. ${on} ${compass8(this.heading)}.`, 'high');
+      // turn by turn resumes: plan afresh from wherever the grid left you
+      if (this.dest && this.settings.turnByTurn && this.vehicle.id !== 'helicopter') void this.computeRoute(true);
+      return;
     }
     if (this.live) return this.speech.say('Live GPS is on. Shift L turns it off first.', 'high');
     // face north and stay so: the beacon and clock directions then read as a north-up map
@@ -2991,8 +2983,7 @@ export class Game {
     g.key = area.key;
     if (!always && !changed) return;
     const loading = this.inLoadedArea(this.x, this.y) ? '' : ' Streets here are still loading.';
-    const route = this.gridRouteHint();
-    this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}${route ? ` ${route}` : ''}`.trim(), 'high');
+    this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}`.trim(), 'high');
   }
 
   /** A grid distance in the grid's own unit (metres, or yards with imperial units), so steps can be counted. */
@@ -3062,43 +3053,6 @@ export class Game {
     return names.length ? names.slice(0, 3).join(' and ') : 'Intersection';
   }
 
-  /**
-   * Turn by turn for grid mode: how far north or south and east or west the next turn is, and which
-   * way the route heads from there. "Next turn 80 metres north and 10 metres east, then east on Green Street."
-   * Off the route, the same figures lead back to it.
-   */
-  private gridRouteHint(): string {
-    const g = this.grid;
-    const r = this.route;
-    if (!g || !r || !this.dest || !this.settings.turnByTurn) return '';
-    // a turn this close counts as reached: as close as the step can land (10 m steps: within ~7 m), at most 8 m.
-    // With bigger steps the count goes on, so the step can be made smaller to get there.
-    const step = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
-    const reach = Math.min(8, Math.max(1.5, step * 0.75));
-    let next: Maneuver | undefined;
-    for (let i = this.nextRealIndex(this.nextMan); i < r.maneuvers.length; i = this.nextRealIndex(i + 1)) {
-      const m = r.maneuvers[i];
-      if (m.kind === 'arrive' && r.partial) break;
-      if (dist(this.x, this.y, m.x, m.y) > reach) {
-        next = m;
-        break;
-      }
-    }
-    // standing at the turn last pointed to (not just stepping back along the route, which also changes it)
-    const reached = !!g.turn && g.turn !== next && dist(this.x, this.y, g.turn.x, g.turn.y) <= reach;
-    g.turn = next;
-    const lead = reached ? 'At the turn. ' : '';
-    if (!next) return r.partial ? `${lead}The route continues as more map loads.` : '';
-    const off = this.gridOffset(next.x, next.y);
-    if (next.kind === 'arrive') return `${lead}${this.dest.name} ${off}.`;
-    // the way the route heads once round the turn
-    const after = pointAlong(r, next.d + 20);
-    const heads = compass8(bearingTo(next.x, next.y, after.x, after.y));
-    this.stepText(next, this.dest.name); // names an unnamed path after the street beside it, if known
-    const onto = next.ontoNamed || next.onto.startsWith('path along') ? next.onto : `the ${next.onto}`;
-    return `${lead}Next turn ${off}, then ${heads} on ${onto}.`;
-  }
-
   private sonar() {
     const list = this.nearby(this.vehicle.scanRadius).slice(0, 14);
     this.audio.sonarStart();
@@ -3147,7 +3101,8 @@ export class Game {
     this.map.setDestination(this.proj.toLatLon(t.x, t.y));
     const d = dist(this.x, this.y, t.x, t.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y));
-    const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter';
+    // turn by turn pauses in grid mode (there is no way you face); it is planned on leaving
+    const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter' && !this.grid;
     const where = this.grid ? this.gridOffset(t.x, t.y) : `${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}`;
     this.speech.say(`Destination ${t.name}${t.detail ? `, ${t.detail}` : ''}, ${where}.${guided ? '' : ' Follow the beacon.'}`, 'high');
     if (guided) void this.computeRoute(true);

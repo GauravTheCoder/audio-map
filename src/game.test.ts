@@ -766,7 +766,7 @@ describe('hold (touch and voice)', () => {
   });
 });
 
-describe('grid mode turn by turn', () => {
+describe('grid mode and destinations', () => {
   const flush = () => new Promise((r) => setTimeout(r, 0));
   // Oak Street runs north at x = 0, Elm Street east at y = 200; the destination is on Elm, east of Oak
   async function routed() {
@@ -779,45 +779,6 @@ describe('grid mode turn by turn', () => {
     await flush();
     return h;
   }
-
-  it('says how far each way the next turn is and which way the route goes from it', async () => {
-    const { said, g } = await routed();
-    expect(g.route).not.toBeNull();
-    expect(said.at(-1)).toMatch(/Next turn 150 metres north, then east on Elm Street\.$/);
-  });
-
-  it('counts down as you step, leads back when off the route, and announces reaching the turn', async () => {
-    const { game, said } = await routed();
-    game.run('='); // 100 metre steps
-    game.run('ArrowUp');
-    await flush();
-    expect(said.at(-1)).toMatch(/Next turn 50 metres north, then east on Elm Street\.$/);
-    game.run('-'); // 10 metre steps
-    game.run('ArrowLeft');
-    await flush();
-    expect(said.at(-1)).toMatch(/Next turn 50 metres north and 10 metres east, then east/);
-    game.run('ArrowRight');
-    for (let i = 0; i < 5; i++) game.run('ArrowUp');
-    await flush();
-    expect(said.at(-1)).toMatch(/At the turn\. Elm End 150 metres east\.$/);
-  });
-
-  it('a route planned in grid mode is announced in grid terms, without turn around or left and right', async () => {
-    const h = setup();
-    h.g.areas = { at: vi.fn(async () => ({ key: 'open', kind: 'open ground', sound: 'open' })), has: () => true };
-    h.g.loadCenter = { x: 0, y: 0 };
-    h.g.heading = 180; // was facing away from the route
-    h.game.run('F3');
-    await flush();
-    h.game.setTarget({ name: 'Elm End', x: 150, y: 200 });
-    await flush();
-    const spoken = h.said.join(' ');
-    expect(spoken).toContain('Destination Elm End, 150 metres north and 150 metres east.');
-    expect(spoken).toMatch(/Route \d+ metres\. Next turn 150 metres north, then east on Elm Street\./);
-    expect(spoken).not.toMatch(/Turn around|turn (left|right)|o'clock/);
-    h.game.run('g');
-    expect(h.said.at(-1)).toContain('Elm End, 150 metres north and 150 metres east');
-  });
 
   it('N finds the nearest intersection in grid terms; twice steps onto it', async () => {
     const { game, said, g } = await routed();
@@ -877,17 +838,41 @@ describe('grid mode turn by turn', () => {
     expect(said.at(-1)).toBe('Blue Cafe, cafe, 50 metres north.');
   });
 
-  it('I says the same in grid terms', async () => {
-    const { game, said } = await routed();
-    game.run('i');
-    expect(said.at(-1)).toBe('Next turn 150 metres north, then east on Elm Street.');
+  it('steps say where you are, not route turns', async () => {
+    const { game, said, g } = await routed();
+    expect(g.route).not.toBeNull(); // planned before grid mode
+    game.run('ArrowUp');
+    await flush();
+    expect(said.at(-1)).toBe('Oak Street.');
   });
 
-  it('uses yards with imperial units', async () => {
+  it('I says turn by turn pauses, and where the destination is', async () => {
+    const { game, said } = await routed();
+    game.run('i');
+    expect(said.at(-1)).toBe('Turn by turn pauses in grid mode. Elm End is 150 metres north and 150 metres east; follow the beacon.');
+  });
+
+  it('a destination chosen in grid mode plans no route until grid mode ends', async () => {
+    const h = setup();
+    h.g.areas = { at: vi.fn(async () => ({ key: 'open', kind: 'open ground', sound: 'open' })), has: () => true };
+    h.g.loadCenter = { x: 0, y: 0 };
+    h.game.run('F3');
+    await flush();
+    h.game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    expect(h.g.route).toBeNull();
+    expect(h.said).toContain('Destination Elm End, 150 metres north and 150 metres east. Follow the beacon.');
+    expect(h.said.join(' ')).not.toMatch(/Route \d|Turn around|turn (left|right)|o'clock/);
+    h.game.run('F3');
+    await flush();
+    expect(h.g.route).not.toBeNull();
+    expect(h.said.join(' ')).toMatch(/Grid mode off\..*Route \d+ metres/);
+  });
+
+  it('G gives the destination in yards with imperial units', async () => {
     const { game, said, g } = await routed();
     g.settings.units = 'imperial';
-    game.run(' ');
-    await flush();
-    expect(said.at(-1)).toMatch(/Next turn 160 yards north/);
+    game.run('g');
+    expect(said.at(-1)).toContain('Elm End, 160 yards north and 160 yards east');
   });
 });
