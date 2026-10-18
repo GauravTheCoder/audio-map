@@ -177,14 +177,17 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
   // door node id -> places whose outline it is on
   const doorOf = new Map<number, RawPlace[]>();
   const doors: OverpassEl[] = [];
+  // the query's union blocks can return one element twice
+  const seen = new Set<string>();
   for (const el of els) {
     const t = el.tags;
-    if (!t) continue;
+    if (!t || seen.has(el.type + el.id)) continue;
+    seen.add(el.type + el.id);
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat === undefined || lon === undefined) continue;
     const kind = accessKind(t);
-    if (kind) access.push({ lat, lon, kind, name: t.name ?? t.ref });
+    if (kind && !SKIP_DOOR.test(t.entrance ?? '')) access.push({ lat, lon, kind, name: t.name ?? t.ref });
     if (t.entrance && el.type === 'node' && !t.amenity && !t.shop && !t.railway && !t.highway) {
       doors.push(el);
       continue;
