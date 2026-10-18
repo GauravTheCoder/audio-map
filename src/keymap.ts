@@ -42,6 +42,7 @@ export const DEFAULT_KEYS = {
   osmNote: [k('v', false, true)],
   share: [k('z')],
   exportRoute: [k('z', true)],
+  saveOffline: [k('s', true)],
   tripSummary: [k('u')],
   whereAmI: [k('e')],
   preview: [k('o')],

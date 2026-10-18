@@ -60,6 +60,7 @@ export const ACTIONS: Action[] = [
   a('Report a map error to OpenStreetMap', 'osmNote'),
   a('Copy share link', 'share'),
   a('Save the route as a GPX file', 'exportRoute'),
+  a('Save this area for offline use', 'saveOffline'),
   a('Trip summary', 'tripSummary'),
   a('Where am I', 'whereAmI'),
   a('Preview route', 'preview'),

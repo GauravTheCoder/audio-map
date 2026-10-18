@@ -1016,6 +1016,21 @@ describe('phone screen', () => {
     expect(said.at(-1)).toMatch(/^Unlit path ahead, 20 metres/);
   });
 
+  it('Shift S fetches the map here and at the destination, and says so when it fails', async () => {
+    vi.mocked(fetchTileArea).mockResolvedValue({ roads: rawRoads(), places: { places: [], signals: new Set<number>() } });
+    vi.mocked(fetchPlaces).mockResolvedValue({ places: [], signals: new Set<number>() });
+    const { game, said, g } = setup();
+    g.dest = { name: 'Elm End', x: 150, y: 200 };
+    game.run('S', { shift: true });
+    await flush();
+    expect(vi.mocked(fetchRoads)).toHaveBeenCalledTimes(2);
+    expect(said.at(-1)).toBe('Saved the map around here and the destination for offline use.');
+    vi.mocked(fetchRoads).mockRejectedValue(new Error('offline'));
+    game.run('S', { shift: true });
+    await flush();
+    expect(said.at(-1)).toBe('Could not save the area. Check your connection.');
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
