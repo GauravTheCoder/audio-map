@@ -172,7 +172,8 @@ export class Game {
   private restartingForGps = false;
   /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
   /** key: the area last spoken; dir: the way the last arrow stepped, where N looks */
-  private grid: { key: string | null; req: number; dir?: number } | null = null;
+  /** key: the area last spoken; dir: the way the last arrow stepped, where N looks; hood: the neighbourhood last said */
+  private grid: { key: string | null; req: number; dir?: number; hood?: string | null } | null = null;
   private gridStepIdx = 1;
   private areas = new AreaMap();
   /** named buildings and grounds from OpenStreetMap, for grid mode (the tiles carry none), fetched around `at` */
@@ -2936,7 +2937,7 @@ export class Game {
     if (this.trip) this.trip.meters += m;
     this.grid!.dir = bearingTo(0, 0, dx, dy); // N looks this way
     this.place(this.x + dx * m, this.y + dy * m, 0, null);
-    void this.gridLook(true);
+    void this.gridLook(false);
   }
 
   private gridResize(dir: 1 | -1) {
@@ -2965,8 +2966,12 @@ export class Game {
     return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
   }
 
-  /** Play the sound for the ground here and say what it is: always when asked, otherwise only when it is new. */
-  private async gridLook(always: boolean, prefix = '', suffix = '') {
+  /**
+   * Play the sound for the ground here and say what it is. An unnamed place says the neighbourhood
+   * it is near when asked (Space, entering grid mode); a step says it only on crossing into another
+   * ("Now near Fort."), so pressing the arrows does not repeat it.
+   */
+  private async gridLook(ask: boolean, prefix = '', suffix = '') {
     const g = this.grid;
     if (!g) return;
     const req = ++g.req;
@@ -2987,9 +2992,16 @@ export class Game {
       return this.speech.say(`${prefix} Could not load what is here.`.trim(), 'high');
     }
     this.audio.areaCue(area.sound);
-    const changed = area.key !== g.key;
     g.key = area.key;
-    if (!always && !changed) return;
+    let hood: string | null = null;
+    try {
+      hood = await this.areas.hood(here);
+    } catch {
+      hood = null;
+    }
+    if (this.grid !== g || g.req !== req) return;
+    const hoodChanged = g.hood !== undefined && hood !== g.hood;
+    g.hood = hood;
     let text = '';
     if (!onRoad) {
       // the tiles' building and ground outlines carry no names: OpenStreetMap's own, when loaded
@@ -2999,22 +3011,16 @@ export class Game {
       if (!area.name && area.number) {
         const st = this.world?.nearestRoad(this.x, this.y, 30, (w) => w.named && !MINOR.has(w.type));
         text = `${area.kind} number ${area.number}${st ? ` on ${st.seg.way.name}` : ''}`;
-      } else if (!area.name) {
-        // still nameless: the neighbourhood it is in, never the place's own name
-        let hood: string | null = null;
-        try {
-          hood = await this.areas.hood(here);
-        } catch {
-          hood = null;
-        }
-        if (this.grid !== g || g.req !== req) return;
-        const kind = area.kind.toLowerCase();
-        if (hood && !kind.includes(hood.toLowerCase()) && !hood.toLowerCase().includes(kind)) text = `${area.kind} near ${hood}`;
       }
     }
     text ||= areaText(area);
+    // never the place's own name: leave the neighbourhood out when what is said already has it
+    const hoodOk = !!hood && !text.toLowerCase().includes(hood.toLowerCase()) && !hood.toLowerCase().includes(text.toLowerCase());
+    let now = '';
+    if (hoodOk && ask && !onRoad && !area.name && !area.number) text = `${text} near ${hood}`;
+    else if (hoodOk && !ask && hoodChanged) now = ` Now near ${hood}.`;
     const loading = this.inLoadedArea(this.x, this.y) ? '' : ' Streets here are still loading.';
-    this.speech.say(`${prefix} ${cap(text)}.${suffix}${loading}`.trim(), 'high');
+    this.speech.say(`${prefix} ${cap(text)}.${now}${suffix}${loading}`.trim(), 'high');
   }
 
   /** Fetch OpenStreetMap's named buildings and grounds around here, in the background, once per ~500 m. */
@@ -3102,7 +3108,7 @@ export class Game {
     const label = this.intersectionLabel(best.n);
     if (move) {
       this.place(best.n.x, best.n.y, 0, null);
-      return void this.gridLook(true, `${label}.`);
+      return void this.gridLook(false, `${label}.`);
     }
     const off = this.gridOffset(best.n.x, best.n.y);
     this.speech.say(off ? `${lead}${label}, ${off}. Press ${back ? 'Shift N' : 'N'} twice to step onto it.` : `You are at ${label}.`, 'high');

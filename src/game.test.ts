@@ -895,14 +895,37 @@ describe('grid mode names', () => {
     return h;
   }
 
-  it('names an unnamed area after the neighbourhood it is near', async () => {
-    const { said } = await at({});
+  it('says the neighbourhood of an unnamed area when asked, not on every step', async () => {
+    const { game, said } = await at({});
+    expect(said.at(-1)).toBe('Commercial area.'); // a step: the same neighbourhood as before
+    game.run(' ');
+    await flush();
+    await flush();
     expect(said.at(-1)).toBe('Commercial area near Kala Ghoda.');
   });
 
-  it('never adds a neighbourhood to a place that has a name, so nothing is "near" itself', async () => {
-    const { said } = await at({ sound: 'building', kind: 'building', name: 'Ashoka Hotel' }, 'Ashoka Hotel');
-    expect(said.at(-1)).toBe('Ashoka Hotel, building.');
+  it('says "now near" once on crossing into another neighbourhood, named place or not', async () => {
+    const { game, said, g } = await at({});
+    g.areas.hood = vi.fn(async () => 'Fort');
+    g.areas.at = vi.fn(async () => ({ key: 'b9', sound: 'building', kind: 'building', name: 'Beryl House' }));
+    game.run('ArrowRight');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Beryl House, building. Now near Fort.');
+    game.run('ArrowRight');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Beryl House, building.');
+  });
+
+  it('never says a place is near itself', async () => {
+    const { game, said, g } = await at({ sound: 'building', kind: 'building', name: 'Ashoka Hotel' }, 'Ashoka Hotel');
+    expect(said.join(' ')).not.toMatch(/near Ashoka Hotel/);
+    g.areas.hood = vi.fn(async () => 'Colaba');
+    game.run(' ');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Ashoka Hotel, building.'); // a named place is not given a neighbourhood when asked
   });
 
   it('leaves out a neighbourhood whose name the area already says', async () => {

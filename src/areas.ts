@@ -67,7 +67,8 @@ export interface AreaTile {
 }
 
 /** The place classes that are neighbourhoods of a town, not towns or countries. */
-const HOOD = new Set(['suburb', 'quarter', 'neighbourhood', 'hamlet', 'village', 'isolated_dwelling']);
+// not isolated_dwelling: often one farmhouse, and "near Rose Cottage" sounds like a place you are at
+const HOOD = new Set(['suburb', 'quarter', 'neighbourhood', 'hamlet', 'village']);
 
 /** Points that are on or beside a building or campus rather than what it is called: stops, entrances, lakes. */
 const NOT_A_NAME = new Set(['bus', 'railway', 'aerialway', 'entrance', 'ferry_terminal', 'water']);
