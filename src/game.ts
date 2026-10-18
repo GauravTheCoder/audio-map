@@ -1,12 +1,12 @@
 // Game loop: vehicle physics, road awareness, announcements and keyboard commands.
 
-import { AreaMap, areaText, type Area } from './areas';
+import { AreaMap, areaText, inRings, type Area } from './areas';
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
 import { bindingsOf, describeBinding, lookup, type ActionId, type Binding } from './keymap';
 import { MapView } from './mapview';
-import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
+import { HIGHWAYS, fetchPlaces, fetchRoads, fetchNamedAreas, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type NamedArea, type RawPlaces, type RawRoads } from './osm';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
@@ -172,9 +172,14 @@ export class Game {
   private restartingForGps = false;
   /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
   /** key: the area last spoken; dir: the way the last arrow stepped, where N looks */
-  private grid: { key: string | null; req: number; dir?: number } | null = null;
+  /** key: the area last spoken; dir: the way the last arrow stepped, where N looks; hood: the neighbourhood last said */
+  private grid: { key: string | null; req: number; dir?: number; hood?: string | null } | null = null;
   private gridStepIdx = 1;
   private areas = new AreaMap();
+  /** named buildings and grounds from OpenStreetMap, for grid mode (the tiles carry none), fetched around `at` */
+  private named: { at: { x: number; y: number }; items: NamedPoly[] } | null = null;
+  private namedLoading = false;
+  private namedRetry = 0;
   /** what to say about each place's exact spot, worked out on first use (reset with the map) */
   private details = new Map<string, { short: string; long: string }>();
   /** lines calling at a stop, by OSM node, once looked up */
@@ -312,6 +317,7 @@ export class Game {
     this.trip = null;
     this.browse = null;
     this.exitGrid();
+    this.named = null;
     this.details.clear();
     this.announcedNodes.clear();
     this.announcedPlaces.clear();
@@ -2931,7 +2937,7 @@ export class Game {
     if (this.trip) this.trip.meters += m;
     this.grid!.dir = bearingTo(0, 0, dx, dy); // N looks this way
     this.place(this.x + dx * m, this.y + dy * m, 0, null);
-    void this.gridLook(true);
+    void this.gridLook(false);
   }
 
   private gridResize(dir: 1 | -1) {
@@ -2960,15 +2966,22 @@ export class Game {
     return { key: `road:${w.name}`, kind: w.name, sound: MINOR.has(w.type) ? 'path' : 'road' };
   }
 
-  /** Play the sound for the ground here and say what it is: always when asked, otherwise only when it is new. */
-  private async gridLook(always: boolean, prefix = '', suffix = '') {
+  /**
+   * Play the sound for the ground here and say what it is. An unnamed place says the neighbourhood
+   * it is near when asked (Space, entering grid mode); a step says it only on crossing into another
+   * ("Now near Fort."), so pressing the arrows does not repeat it.
+   */
+  private async gridLook(ask: boolean, prefix = '', suffix = '') {
     const g = this.grid;
     if (!g) return;
     const req = ++g.req;
+    this.loadNamed();
+    const here = this.proj.toLatLon(this.x, this.y);
     let area = this.gridRoad();
+    const onRoad = !!area;
     if (!area) {
       try {
-        area = await this.areas.at(this.proj.toLatLon(this.x, this.y));
+        area = await this.areas.at(here);
       } catch {
         area = null;
       }
@@ -2979,11 +2992,65 @@ export class Game {
       return this.speech.say(`${prefix} Could not load what is here.`.trim(), 'high');
     }
     this.audio.areaCue(area.sound);
-    const changed = area.key !== g.key;
     g.key = area.key;
-    if (!always && !changed) return;
+    let hood: string | null = null;
+    try {
+      hood = await this.areas.hood(here);
+    } catch {
+      hood = null;
+    }
+    if (this.grid !== g || g.req !== req) return;
+    const hoodChanged = g.hood !== undefined && hood !== g.hood;
+    g.hood = hood;
+    let text = '';
+    if (!onRoad) {
+      // the tiles' building and ground outlines carry no names: OpenStreetMap's own, when loaded
+      const osm = this.namedAt(this.x, this.y, area.sound === 'building');
+      // a named compound where the tiles have no ground at all is its "grounds", not "open ground"
+      if (osm) area = { ...area, name: osm.name, kind: osm.kind ?? (area.sound === 'open' ? 'grounds' : area.kind), number: undefined };
+      if (!area.name && area.number) {
+        const st = this.world?.nearestRoad(this.x, this.y, 30, (w) => w.named && !MINOR.has(w.type));
+        text = `${area.kind} number ${area.number}${st ? ` on ${st.seg.way.name}` : ''}`;
+      }
+    }
+    text ||= areaText(area);
+    // never the place's own name: leave the neighbourhood out when what is said already has it
+    const hoodOk = !!hood && !text.toLowerCase().includes(hood.toLowerCase()) && !hood.toLowerCase().includes(text.toLowerCase());
+    let now = '';
+    if (hoodOk && ask && !onRoad && !area.name && !area.number) text = `${text} near ${hood}`;
+    else if (hoodOk && !ask && hoodChanged) now = ` Now near ${hood}.`;
     const loading = this.inLoadedArea(this.x, this.y) ? '' : ' Streets here are still loading.';
-    this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}`.trim(), 'high');
+    this.speech.say(`${prefix} ${cap(text)}.${now}${suffix}${loading}`.trim(), 'high');
+  }
+
+  /** Fetch OpenStreetMap's named buildings and grounds around here, in the background, once per ~500 m. */
+  private loadNamed() {
+    if (this.namedLoading || performance.now() < this.namedRetry) return;
+    if (this.named && dist(this.x, this.y, this.named.at.x, this.named.at.y) < 500) return;
+    const at = { x: this.x, y: this.y };
+    const proj = this.proj;
+    this.namedLoading = true;
+    fetchNamedAreas(proj.toLatLon(at.x, at.y), 900, new AbortController().signal)
+      .then((list) => {
+        if (this.proj !== proj) return; // moved to another place meanwhile
+        this.named = { at, items: list.map((a) => namedPoly(a, proj)) };
+      })
+      .catch(() => {
+        this.namedRetry = performance.now() + 30_000; // the tiles' names will do until then
+      })
+      .finally(() => {
+        this.namedLoading = false;
+      });
+  }
+
+  /** The smallest named building (or, for ground, named non-building) from OpenStreetMap around (x, y). */
+  private namedAt(x: number, y: number, building: boolean): NamedPoly | null {
+    let best: NamedPoly | null = null;
+    for (const a of this.named?.items ?? []) {
+      if (a.building !== building || x < a.minX || x > a.maxX || y < a.minY || y > a.maxY || !inRings([a.ring], x, y)) continue;
+      if (!best || a.size < best.size) best = a;
+    }
+    return best;
   }
 
   /** A grid distance in the grid's own unit (metres, or yards with imperial units), so steps can be counted. */
@@ -3041,7 +3108,7 @@ export class Game {
     const label = this.intersectionLabel(best.n);
     if (move) {
       this.place(best.n.x, best.n.y, 0, null);
-      return void this.gridLook(true, `${label}.`);
+      return void this.gridLook(false, `${label}.`);
     }
     const off = this.gridOffset(best.n.x, best.n.y);
     this.speech.say(off ? `${lead}${label}, ${off}. Press ${back ? 'Shift N' : 'N'} twice to step onto it.` : `You are at ${label}.`, 'high');
@@ -3440,6 +3507,27 @@ export class Game {
   toXY(p: LatLon) {
     return this.proj.toXY(p.lat, p.lon);
   }
+}
+
+interface NamedPoly {
+  name: string;
+  building: boolean;
+  kind?: string;
+  ring: { x: number; y: number }[];
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  size: number;
+}
+
+function namedPoly(a: NamedArea, proj: Projection): NamedPoly {
+  const ring = a.ring.map((p) => proj.toXY(p.lat, p.lon));
+  const xs = ring.map((p) => p.x);
+  const ys = ring.map((p) => p.y);
+  let size = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) size += (ring[j].x - ring[i].x) * (ring[j].y + ring[i].y);
+  return { name: a.name, building: a.building, kind: a.kind, ring, minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys), size: Math.abs(size / 2) };
 }
 
 /** An angle rounded to 5 degrees, for speech. */

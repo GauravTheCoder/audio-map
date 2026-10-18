@@ -4,12 +4,12 @@ import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
 import { World, type Place } from './world';
-import { fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode } from './osm';
+import { fetchNamedAreas, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode } from './osm';
 import { fetchTileArea } from './tiles';
 import type { RawPlaces, RawRoads } from './osm';
 
 vi.mock('./onlineRouter', () => ({ hasOnlineRouting: () => false, fetchOnlineRoute: vi.fn() }));
-vi.mock('./osm', async (orig) => ({ ...(await orig<typeof import('./osm')>()), fetchRoads: vi.fn(), fetchPlaces: vi.fn(), fetchRoadsBox: vi.fn(), reverseGeocode: vi.fn(), fetchStopRoutes: vi.fn() }));
+vi.mock('./osm', async (orig) => ({ ...(await orig<typeof import('./osm')>()), fetchRoads: vi.fn(), fetchPlaces: vi.fn(), fetchRoadsBox: vi.fn(), reverseGeocode: vi.fn(), fetchStopRoutes: vi.fn(), fetchNamedAreas: vi.fn() }));
 vi.mock('./tiles', () => ({ fetchTileArea: vi.fn() }));
 vi.stubGlobal('requestAnimationFrame', () => 0);
 
@@ -74,6 +74,7 @@ beforeEach(() => {
   vi.mocked(reverseGeocode).mockReset().mockResolvedValue('Testville');
   vi.mocked(fetchTileArea).mockReset().mockRejectedValue(new Error('no tiles'));
   vi.mocked(fetchStopRoutes).mockReset().mockResolvedValue([]);
+  vi.mocked(fetchNamedAreas).mockReset().mockResolvedValue([]);
 });
 
 describe('commands', () => {
@@ -874,5 +875,85 @@ describe('grid mode and destinations', () => {
     g.settings.units = 'imperial';
     game.run('g');
     expect(said.at(-1)).toContain('Elm End, 160 yards north and 160 yards east');
+  });
+});
+
+describe('grid mode names', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const sq = (x0: number, y0: number, x1: number, y1: number) => [ll(x0, y0), ll(x1, y0), ll(x1, y1), ll(x0, y1)];
+  // the traveller steps 10 m east of Oak Street, off the road, into whatever the tiles say is there
+  async function at(area: Record<string, unknown>, hood: string | null = 'Kala Ghoda') {
+    const h = setup();
+    h.g.areas = { at: vi.fn(async () => ({ key: 'a1', sound: 'commercial', kind: 'commercial area', ...area })), has: () => true, hood: vi.fn(async () => hood) };
+    h.g.loadCenter = { x: 0, y: 0 };
+    h.game.run('F3');
+    await flush();
+    await flush();
+    h.game.run('ArrowRight');
+    await flush();
+    await flush();
+    return h;
+  }
+
+  it('says the neighbourhood of an unnamed area when asked, not on every step', async () => {
+    const { game, said } = await at({});
+    expect(said.at(-1)).toBe('Commercial area.'); // a step: the same neighbourhood as before
+    game.run(' ');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Commercial area near Kala Ghoda.');
+  });
+
+  it('says "now near" once on crossing into another neighbourhood, named place or not', async () => {
+    const { game, said, g } = await at({});
+    g.areas.hood = vi.fn(async () => 'Fort');
+    g.areas.at = vi.fn(async () => ({ key: 'b9', sound: 'building', kind: 'building', name: 'Beryl House' }));
+    game.run('ArrowRight');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Beryl House, building. Now near Fort.');
+    game.run('ArrowRight');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Beryl House, building.');
+  });
+
+  it('never says a place is near itself', async () => {
+    const { game, said, g } = await at({ sound: 'building', kind: 'building', name: 'Ashoka Hotel' }, 'Ashoka Hotel');
+    expect(said.join(' ')).not.toMatch(/near Ashoka Hotel/);
+    g.areas.hood = vi.fn(async () => 'Colaba');
+    game.run(' ');
+    await flush();
+    await flush();
+    expect(said.at(-1)).toBe('Ashoka Hotel, building.'); // a named place is not given a neighbourhood when asked
+  });
+
+  it('leaves out a neighbourhood whose name the area already says', async () => {
+    const { said } = await at({ kind: 'cuffe parade promenade' }, 'Cuffe Parade');
+    expect(said.at(-1)).toBe('Cuffe parade promenade.');
+  });
+
+  it('says nothing more when no neighbourhood is near', async () => {
+    const { said } = await at({}, null);
+    expect(said.at(-1)).toBe('Commercial area.');
+  });
+
+  it("gives an unnamed building its house number and street", async () => {
+    const { said } = await at({ sound: 'building', kind: 'building', number: '12' });
+    expect(said.at(-1)).toBe('Building number 12 on Oak Street.');
+  });
+
+  it("uses OpenStreetMap's own names for buildings and grounds the tiles leave unnamed", async () => {
+    vi.mocked(fetchNamedAreas).mockResolvedValue([
+      { name: 'Beryl House', building: true, ring: sq(5, 40, 30, 70) },
+      { name: 'Cama Garden', building: false, kind: 'park', ring: sq(-50, 0, 100, 150) },
+    ]);
+    const b = await at({ sound: 'building', kind: 'building', number: '12' });
+    expect(b.said.at(-1)).toBe('Beryl House, building.');
+    const g = await at({});
+    expect(g.said.at(-1)).toBe('Cama Garden, park.');
+    vi.mocked(fetchNamedAreas).mockResolvedValue([{ name: 'Navy Accounts Office', building: false, ring: sq(-50, 0, 100, 150) }]);
+    const o = await at({ sound: 'open', kind: 'open ground', key: 'open' });
+    expect(o.said.at(-1)).toBe('Navy Accounts Office, grounds.');
   });
 });

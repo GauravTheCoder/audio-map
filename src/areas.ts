@@ -3,7 +3,7 @@
 
 import type { VectorTile } from '@mapbox/vector-tile';
 import type { LatLon } from './geo';
-import { EXTENT, fetchTile, tileX, tileY } from './tiles';
+import { EXTENT, Z, fetchTile, tileX, tileY } from './tiles';
 import { humanize } from './world';
 
 /** Which short sound plays for an area. */
@@ -16,6 +16,8 @@ export interface Area {
   kind: string;
   name?: string;
   sound: AreaSound;
+  /** a building's house number, when it has no name */
+  number?: string;
 }
 
 interface Pt {
@@ -40,6 +42,8 @@ export interface AreaPoly {
   namedBy?: string[];
   /** name found from the labels inside it (null: none), worked out on first use */
   labelled?: string | null;
+  /** house number found inside it (null: none), worked out on first use */
+  numbered?: string | null;
 }
 
 export interface Label {
@@ -56,7 +60,15 @@ export interface AreaTile {
   polys: AreaPoly[];
   /** named points (shops, parks, lakes), used to name the area they sit in */
   labels: Label[];
+  /** neighbourhoods and suburbs, by their centre point */
+  hoods?: { x: number; y: number; name: string }[];
+  /** house numbers, at the address point (usually inside the building) */
+  numbers?: { x: number; y: number; num: string }[];
 }
+
+/** The place classes that are neighbourhoods of a town, not towns or countries. */
+// not isolated_dwelling: often one farmhouse, and "near Rose Cottage" sounds like a place you are at
+const HOOD = new Set(['suburb', 'quarter', 'neighbourhood', 'hamlet', 'village']);
 
 /** Points that are on or beside a building or campus rather than what it is called: stops, entrances, lakes. */
 const NOT_A_NAME = new Set(['bus', 'railway', 'aerialway', 'entrance', 'ferry_terminal', 'water']);
@@ -228,7 +240,17 @@ function readTile(vt: VectorTile): AreaTile {
     if (type === 1 && q && p.name) labels.push({ x: q.x, y: q.y, name: String(p.name), rank: 0, cls: 'water', sub: String(p.class ?? '') });
   });
   labels.sort((a, b) => a.rank - b.rank);
-  return { polys, labels };
+  const hoods: NonNullable<AreaTile['hoods']> = [];
+  each('place', (p, rings, _i, type) => {
+    const q = rings()[0]?.[0];
+    if (type === 1 && q && p.name && HOOD.has(String(p.class))) hoods.push({ x: q.x, y: q.y, name: String(p.name) });
+  });
+  const numbers: NonNullable<AreaTile['numbers']> = [];
+  each('housenumber', (p, rings, _i, type) => {
+    const q = rings()[0]?.[0];
+    if (type === 1 && q && p.housenumber) numbers.push({ x: q.x, y: q.y, num: String(p.housenumber) });
+  });
+  return { polys, labels, hoods, numbers };
 }
 
 /** A building if (x, y) is in one, otherwise the smallest area around it. */
@@ -252,7 +274,13 @@ export function pickArea(tile: AreaTile, tileKey: string, x: number, y: number):
     // a building takes its best-known occupant; grounds only an unambiguous name (a campus has many)
     b.labelled = b.building ? ([...names][0] ?? null) : names.size === 1 ? [...names][0] : null;
   }
-  return { key: `${tileKey}/${b.id}`, kind: b.kind, name: b.name ?? b.labelled ?? undefined, sound: b.sound };
+  const name = b.name ?? b.labelled ?? undefined;
+  if (b.building && !name && b.numbered === undefined) {
+    const inside = (n: { x: number; y: number }) => n.x >= b.minX && n.x <= b.maxX && n.y >= b.minY && n.y <= b.maxY && inRings(b.rings, n.x, n.y);
+    const nums = [...new Set((tile.numbers ?? []).filter(inside).map((n) => n.num))];
+    b.numbered = nums.length === 1 ? nums[0] : null; // a block of several addresses has no one number
+  }
+  return { key: `${tileKey}/${b.id}`, kind: b.kind, name, sound: b.sound, number: (!name && b.numbered) || undefined };
 }
 
 /** "Hyde Park" rather than "Hyde Park, park"; "Tesco, building"; "park". */
@@ -266,11 +294,7 @@ export function areaText(a: Area): string {
 export class AreaMap {
   private tiles = new Map<string, Promise<AreaTile>>();
 
-  async at(p: LatLon): Promise<Area> {
-    const gx = tileX(p.lon);
-    const gy = tileY(p.lat);
-    const tx = Math.floor(gx);
-    const ty = Math.floor(gy);
+  private tile(tx: number, ty: number): Promise<AreaTile> {
     const key = `${tx},${ty}`;
     let t = this.tiles.get(key);
     if (t) this.tiles.delete(key); // re-insert as most recent
@@ -279,8 +303,42 @@ export class AreaMap {
       t.catch(() => this.tiles.delete(key)); // try again next time
     }
     this.tiles.set(key, t);
-    while (this.tiles.size > 12) this.tiles.delete(this.tiles.keys().next().value!);
-    return pickArea(await t, key, (gx - tx) * EXTENT, (gy - ty) * EXTENT);
+    while (this.tiles.size > 16) this.tiles.delete(this.tiles.keys().next().value!);
+    return t;
+  }
+
+  async at(p: LatLon): Promise<Area> {
+    const gx = tileX(p.lon);
+    const gy = tileY(p.lat);
+    const tx = Math.floor(gx);
+    const ty = Math.floor(gy);
+    return pickArea(await this.tile(tx, ty), `${tx},${ty}`, (gx - tx) * EXTENT, (gy - ty) * EXTENT);
+  }
+
+  /**
+   * The neighbourhood whose centre is nearest, within `within` metres; null if none is. Tiles give
+   * a centre point, not a boundary, so near a border this can be the neighbouring one: say "near".
+   */
+  async hood(p: LatLon, within = 1000): Promise<string | null> {
+    const gx = tileX(p.lon) * EXTENT;
+    const gy = tileY(p.lat) * EXTENT;
+    const perUnit = (40_075_016.686 * Math.cos((p.lat * Math.PI) / 180)) / (2 ** Z * EXTENT); // metres per tile unit
+    const r = within / perUnit;
+    let best: { name: string; d: number } | null = null;
+    for (let tx = Math.floor((gx - r) / EXTENT); tx <= Math.floor((gx + r) / EXTENT); tx++)
+      for (let ty = Math.floor((gy - r) / EXTENT); ty <= Math.floor((gy + r) / EXTENT); ty++) {
+        let t: AreaTile;
+        try {
+          t = await this.tile(tx, ty);
+        } catch {
+          continue;
+        }
+        for (const h of t.hoods ?? []) {
+          const d = Math.hypot(tx * EXTENT + h.x - gx, ty * EXTENT + h.y - gy);
+          if (d <= r && (!best || d < best.d)) best = { name: h.name, d };
+        }
+      }
+    return best?.name ?? null;
   }
 
   /** True if the tile under p has been read already. */

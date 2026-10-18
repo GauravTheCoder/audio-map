@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accessKind, crossingExtras, parsePlaces, type OverpassEl } from './osm';
+import { accessKind, crossingExtras, parseNamedAreas, parsePlaces, type OverpassEl } from './osm';
 
 describe('parsePlaces', () => {
   const els: OverpassEl[] = [
@@ -76,5 +76,28 @@ describe('parsePlaces edge cases', () => {
   it('names a platform without name or ref plainly', () => {
     const r = parsePlaces([{ type: 'node', id: 3, lat: 1, lon: 1, tags: { railway: 'platform' } }]);
     expect(r.places[0].tags.name).toBe('Platform');
+  });
+});
+
+describe('parseNamedAreas', () => {
+  const ring = [
+    { lat: 1, lon: 1 },
+    { lat: 1, lon: 2 },
+    { lat: 2, lon: 2 },
+    { lat: 1, lon: 1 },
+  ];
+  it('keeps named outlines, saying what grounds are but not buildings', () => {
+    const els: OverpassEl[] = [
+      { type: 'way', id: 1, tags: { building: 'apartments', name: 'Beryl House' }, geometry: ring },
+      { type: 'way', id: 2, tags: { leisure: 'park', name: 'Cama Garden' }, geometry: ring },
+      { type: 'way', id: 3, tags: { landuse: 'retail', name: 'Colaba Market' }, geometry: ring },
+      { type: 'way', id: 4, tags: { building: 'yes' }, geometry: ring },
+      { type: 'way', id: 5, tags: { building: 'yes', name: 'Too small' }, geometry: ring.slice(0, 2) },
+    ];
+    expect(parseNamedAreas(els).map((a) => [a.name, a.building, a.kind])).toEqual([
+      ['Beryl House', true, undefined],
+      ['Cama Garden', false, 'park'],
+      ['Colaba Market', false, undefined],
+    ]);
   });
 });

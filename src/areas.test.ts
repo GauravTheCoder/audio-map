@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { areaText, inRings, makePoly, pickArea, splitPolygons, type AreaTile } from './areas';
+import { describe, expect, it, vi } from 'vitest';
+import { AreaMap, areaText, inRings, makePoly, pickArea, splitPolygons, type AreaTile } from './areas';
+import { EXTENT, fetchTile, tileX, tileY } from './tiles';
+
+vi.mock('./tiles', async (orig) => ({ ...(await orig<typeof import('./tiles')>()), fetchTile: vi.fn() }));
 
 const square = (x0: number, y0: number, x1: number, y1: number) => [
   { x: x0, y: y0 },
@@ -79,5 +82,50 @@ describe('areaText', () => {
     expect(areaText({ key: '', kind: 'park', name: 'Victoria Park', sound: 'green' })).toBe('Victoria Park');
     expect(areaText({ key: '', kind: 'building', name: 'Corner Shop', sound: 'building' })).toBe('Corner Shop, building');
     expect(areaText({ key: '', kind: 'lake', sound: 'water' })).toBe('lake');
+  });
+});
+
+describe('house numbers', () => {
+  const tile: AreaTile = {
+    polys: [
+      makePoly('b1', 'building', 'building', [square(0, 0, 100, 100)]),
+      makePoly('b2', 'building', 'building', [square(200, 0, 300, 100)]),
+      makePoly('b3', 'building', 'building', [square(400, 0, 500, 100)]),
+    ],
+    labels: [{ x: 450, y: 50, name: 'Corner Shop', rank: 5, cls: 'shop', sub: 'shop' }],
+    numbers: [
+      { x: 50, y: 50, num: '12' },
+      { x: 220, y: 50, num: '14' },
+      { x: 280, y: 50, num: '16' },
+      { x: 460, y: 50, num: '18' },
+    ],
+  };
+  it('gives an unnamed building the one number inside it', () => {
+    expect(pickArea(tile, 't', 10, 10).number).toBe('12');
+  });
+  it('gives no number to a block of several addresses, or to a named building', () => {
+    expect(pickArea(tile, 't', 250, 50).number).toBeUndefined();
+    expect(pickArea(tile, 't', 410, 10)).toMatchObject({ name: 'Corner Shop', number: undefined });
+  });
+});
+
+describe('AreaMap.hood', () => {
+  // a fake tile: one neighbourhood point, at tile units (x, y) of whatever tile is asked for
+  const fake = (name: string, x: number, y: number) => ({
+    layers: {
+      place: { length: 1, feature: () => ({ type: 1, properties: { class: 'neighbourhood', name }, loadGeometry: () => [[{ x, y }]] }) },
+    },
+  });
+  const p = { lat: 18.9255, lon: 72.832 };
+  const local = { x: (tileX(p.lon) % 1) * EXTENT, y: (tileY(p.lat) % 1) * EXTENT };
+
+  it('finds the nearest neighbourhood centre within a kilometre', async () => {
+    vi.mocked(fetchTile).mockResolvedValue(fake('Kala Ghoda', local.x + 100, local.y) as never);
+    expect(await new AreaMap().hood(p)).toBe('Kala Ghoda'); // ~100 tile units is about 230 m here
+  });
+
+  it('gives none when the nearest centre is further than that', async () => {
+    vi.mocked(fetchTile).mockResolvedValue(fake('Far Away', local.x + 2000, local.y) as never);
+    expect(await new AreaMap().hood(p, 1000)).toBeNull();
   });
 });
