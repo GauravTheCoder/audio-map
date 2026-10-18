@@ -450,6 +450,7 @@ export class Game {
       this.loadCenter = at;
       // the area name is nice to have, not worth holding up the start for
       const area = await Promise.race([areaP, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
+      if (abort.signal.aborted) return false; // a newer load took over while the name was pending
       if (area) {
         if (!initial && area !== this.areaName) this.speech.say(`Entering ${area}`, 'low');
         this.areaName = area;
