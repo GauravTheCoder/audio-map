@@ -7,7 +7,7 @@ import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
-import { initPreview } from './preview';
+import { initPreview, stopPreview } from './preview';
 import type { PlaceGroup } from './world';
 import { Speech } from './speech';
 import { Tutorial } from './tutorial';
@@ -260,6 +260,7 @@ function closeMenu() {
 }
 
 function startGame(learn = false) {
+  stopPreview(speech);
   if (!game) {
     const audio = new AudioEngine(settings.volume, settings.soundTheme); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
