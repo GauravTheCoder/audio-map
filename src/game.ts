@@ -8,6 +8,7 @@ import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type 
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
+import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
 import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
@@ -142,6 +143,12 @@ export class Game {
   private y = 0;
   private heading = 0;
   private speed = 0;
+  /** live GPS mode: once a fix has arrived, the device, not the keyboard, moves the traveller */
+  private live: LiveGps | null = null;
+  private liveFix: GpsFix | null = null;
+  private gpsEst: Estimate | null = null;
+  private gpsPoor = false;
+  private restartingForGps = false;
   private throttle = 0;
   private vehicle: VehicleProfile;
 
@@ -258,6 +265,9 @@ export class Game {
   // ---------------- lifecycle ----------------
 
   async start(center: LatLon, placeName?: string) {
+    // going somewhere else by search or jump ends live GPS, which would only pull you back
+    const liveOff = !this.restartingForGps && !!this.live;
+    if (!this.restartingForGps) this.stopLive();
     this.loadAbort?.abort();
     this.proj = new Projection(center);
     this.loadNotes();
@@ -292,7 +302,7 @@ export class Game {
       requestAnimationFrame(this.frame);
     }
 
-    this.speech.say(`Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
+    this.speech.say(`${liveOff ? 'Live GPS off. ' : ''}Loading map data${placeName ? ` for ${placeName}` : ''}. Please wait.`, 'high');
     const stopHeartbeat = this.loadingHeartbeat();
     const ok = await this.load(true);
     stopHeartbeat();
@@ -578,9 +588,40 @@ export class Game {
   private step(dt: number) {
     this.clock += dt;
     const v = this.vehicle;
-    const inp = this.input;
+    if (this.live && this.liveFix) this.followGps(dt);
+    else this.drive(dt);
 
-    // --- speed ---
+    this.updateRoad(false);
+    this.updateRumble();
+    this.updateRing();
+    this.checkInJunction();
+
+    if (this.clock > this.nextAheadCheck) {
+      this.nextAheadCheck = this.clock + 0.1;
+      this.checkAhead();
+    }
+    this.updateProximityBeeps();
+    if (this.route && this.clock > this.nextRouteCheck) {
+      this.nextRouteCheck = this.clock + 0.1;
+      this.updateRoute();
+    }
+    if (this.clock > this.nextPlaceCheck) {
+      this.nextPlaceCheck = this.clock + 0.25;
+      this.checkPlaces();
+      this.checkHazards();
+      this.checkNotes();
+    }
+    this.updateDestination();
+
+    if (!this.loading && this.clock > this.nextLoadTry && dist(this.x, this.y, this.loadCenter.x, this.loadCenter.y) > v.loadRadius * 0.55) {
+      void this.load(false);
+    }
+  }
+
+  /** Keyboard driving: speed, turning, road assist and movement. */
+  private drive(dt: number) {
+    const v = this.vehicle;
+    const inp = this.input;
     this.throttle = 0;
     if (inp.isDown('ArrowUp') && !inp.isDown('ControlLeft') && !inp.isDown('ControlRight')) {
       this.speed += v.accel * dt;
@@ -615,32 +656,30 @@ export class Game {
     if (this.trip) this.trip.meters += this.speed * dt;
     this.x += Math.sin(r) * this.speed * dt;
     this.y += Math.cos(r) * this.speed * dt;
+  }
 
-    this.updateRoad(false);
-    this.updateRumble();
-    this.updateRing();
-    this.checkInJunction();
-
-    if (this.clock > this.nextAheadCheck) {
-      this.nextAheadCheck = this.clock + 0.1;
-      this.checkAhead();
+  /** Follow the device's real position, speed and heading instead of the keyboard. */
+  private followGps(dt: number) {
+    const f = this.liveFix;
+    const e = this.gpsEst;
+    if (!f || !e) return;
+    const t = { x: e.x, y: e.y };
+    // a walker's fix is likely on a street: pull it onto the nearest one when the fix is good enough
+    const r = this.vehicle.id === 'helicopter' ? 0 : snapRadius(e.acc);
+    const hit = r ? this.world?.nearestRoad(e.x, e.y, r, this.filter) : null;
+    if (hit) {
+      t.x = hit.hit.px;
+      t.y = hit.hit.py;
     }
-    this.updateProximityBeeps();
-    if (this.route && this.clock > this.nextRouteCheck) {
-      this.nextRouteCheck = this.clock + 0.1;
-      this.updateRoute();
-    }
-    if (this.clock > this.nextPlaceCheck) {
-      this.nextPlaceCheck = this.clock + 0.25;
-      this.checkPlaces();
-      this.checkHazards();
-      this.checkNotes();
-    }
-    this.updateDestination();
-
-    if (!this.loading && this.clock > this.nextLoadTry && dist(this.x, this.y, this.loadCenter.x, this.loadCenter.y) > v.loadRadius * 0.55) {
-      void this.load(false);
-    }
+    const k = Math.min(1, dt * 3);
+    const ox = this.x;
+    const oy = this.y;
+    this.x += (t.x - this.x) * k;
+    this.y += (t.y - this.y) * k;
+    if (this.trip) this.trip.meters += dist(ox, oy, this.x, this.y);
+    this.speed = Math.min(this.vehicle.maxSpeed, f.speed);
+    const h = pickHeading(this.live!.compass, f.heading, f.speed);
+    if (h !== null) this.heading = easeAngle(this.heading, h, dt * 6);
   }
 
   /**
@@ -1921,7 +1960,7 @@ export class Game {
         return;
       case 'ArrowLeft':
       case 'ArrowRight': {
-        if (c.repeat) return;
+        if (c.repeat || (this.live && this.liveFix)) return;
         const dir = c.code === 'ArrowLeft' ? -1 : 1;
         if (c.ctrl) return this.snapTurn(dir);
         this.turnedDuringHold = false;
@@ -1951,7 +1990,7 @@ export class Game {
           'high',
         );
       case 'l':
-        return this.speech.say(this.locationText(), 'high');
+        return c.shift ? void this.toggleLive() : this.speech.say(this.locationText(), 'high');
       case 'n': {
         // pressed twice quickly: move there
         const now = performance.now();
@@ -2105,7 +2144,7 @@ export class Game {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
-        'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
+        'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
@@ -2259,6 +2298,7 @@ export class Game {
     const u = this.settings.units;
     if (this.vehicle.id === 'helicopter') return this.speech.say('Moving by intersection needs a road; not in the helicopter.', 'high');
     if (this.ring) return this.speech.say('In a roundabout. N gives the next exit.', 'high');
+    if (this.live && this.liveFix) return this.speech.say('Live GPS is moving you. Shift L turns it off.', 'high');
     const w = this.world!;
     const back = dir < 0;
     const s = this.roadStart(20, this.filter, back ? normDeg(this.heading + 180) : this.heading);
@@ -2326,6 +2366,70 @@ export class Game {
       return this.speech.say(`${moved(end.d)}${onto()}, to ${where}.`, 'high');
     }
     this.speech.say(`No intersection or bend within ${fmtDistance(1500, u)}${back ? ' behind you' : ''}.`, 'high');
+  }
+
+  private stopLive() {
+    this.live?.stop();
+    this.live = null;
+    this.liveFix = null;
+    this.gpsEst = null;
+    this.gpsPoor = false;
+    this.speed = 0;
+  }
+
+  /** Live GPS on or off. Must run from a key press so iOS allows the compass prompt. */
+  private async toggleLive() {
+    if (this.live) {
+      this.stopLive();
+      return this.speech.say('Live GPS off. Keyboard control.', 'high');
+    }
+    const live = new LiveGps(
+      (f) => void this.onGpsFix(live, f),
+      (p) => {
+        if (this.live !== live) return;
+        if (p === 'nosignal') {
+          return this.speech.say(this.liveFix ? 'No GPS signal. Staying at the last known position.' : 'No GPS signal yet. Keyboard control until a location arrives.', 'high');
+        }
+        this.stopLive();
+        this.speech.say(p === 'denied' ? 'Location permission denied. Live GPS off.' : 'This device has no location support. Live GPS off.', 'high');
+      },
+      () => this.live === live && this.speech.say('GPS signal back.', 'normal'),
+    );
+    this.live = live;
+    this.speech.say('Live GPS on. Waiting for your location. The keyboard works until it arrives.', 'high');
+    await live.start();
+  }
+
+  private async onGpsFix(live: LiveGps, f: GpsFix) {
+    // while the map restarts around the first fix, later fixes would mix the old and new projections
+    if (this.live !== live || this.restartingForGps) return;
+    const first = !this.liveFix;
+    const acc = f.accuracy ?? DEFAULT_ACCURACY;
+    const poor = acc > POOR_ACCURACY;
+    if (poor !== this.gpsPoor) {
+      this.gpsPoor = poor;
+      this.speech.say(poor ? `GPS accuracy is poor, about ${fmtDistance(acc, this.settings.units)}.${first ? '' : ' Ignoring weak fixes.'}` : 'GPS accuracy is good again.', 'normal');
+    }
+    if (poor && !first) return;
+    this.liveFix = f;
+    const p0 = this.proj.toXY(f.lat, f.lon);
+    this.gpsEst = fuse(this.gpsEst, p0.x, p0.y, acc, performance.now() / 1000, f.speed);
+    if (!first) return;
+    if (Math.hypot(p0.x, p0.y) > 20_000) {
+      // projection distortion grows with distance, so begin afresh around the real position
+      this.restartingForGps = true;
+      try {
+        await this.start({ lat: f.lat, lon: f.lon });
+      } finally {
+        this.restartingForGps = false;
+      }
+    }
+    if (this.live !== live) return;
+    const q = this.proj.toXY(f.lat, f.lon);
+    this.gpsEst = { x: q.x, y: q.y, acc, t: performance.now() / 1000 };
+    this.x = q.x;
+    this.y = q.y;
+    this.speech.say('Location found.', 'normal');
   }
 
   /** Put the traveller somewhere new along the roads, stopped, without the cues for getting there. */

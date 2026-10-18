@@ -17,6 +17,7 @@ export const ACTIONS: Action[] = [
   a('Headphone check', 'Shift H', 'H', true),
   a('Speed', 'S', 's'),
   a('Location', 'L', 'l'),
+  a('Toggle live GPS and compass', 'Shift L', 'L', true),
   a('Next intersection', 'N', 'n'),
   a('Last intersection behind you', 'Shift N', 'N', true),
   a('Step forward through intersections', 'Period', '.'),
