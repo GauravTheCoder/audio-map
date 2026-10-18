@@ -76,6 +76,13 @@ beforeEach(() => {
 });
 
 describe('commands', () => {
+  it('names the rebound key in the no-destination hint', () => {
+    const { game, said, g } = setup();
+    g.settings.keyBindings = { navigate: { key: 'k', ctrl: true } };
+    game.run('i');
+    expect(said.at(-1)).toBe('No destination. Press Control K to choose one.');
+  });
+
   it('H reports compass heading', () => {
     const { game, said, g } = setup();
     g.heading = 90;
