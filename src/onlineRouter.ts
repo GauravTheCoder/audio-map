@@ -129,6 +129,7 @@ function buildRoute(
     points.push({ x: p.x, y: p.y, d: last ? last.d + dist(last.x, last.y, p.x, p.y) : 0 });
   }
   // the router stops at the nearest road; add the last stretch to the destination itself (e.g. a building)
+  if (!points.length) return null;
   const tail = points[points.length - 1];
   const gap = dist(tail.x, tail.y, to.x, to.y);
   if (gap > 3 && gap < 300) points.push({ x: to.x, y: to.y, d: tail.d + gap });
