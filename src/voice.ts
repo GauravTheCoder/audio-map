@@ -76,8 +76,10 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
   rec.onresult = (e) => {
     const r = e.results[e.resultIndex];
     const game = getGame();
-    const a = r.isFinal && game ? matchPhrase(r[0].transcript) : null;
-    if (a && game) perform(game, a);
+    if (!r.isFinal || !game) return;
+    const a = matchPhrase(r[0].transcript);
+    if (a) perform(game, a);
+    else say(`Did not understand ${r[0].transcript.trim()}.`);
   };
   // browsers end recognition after silence; restart while the user wants it on
   rec.onend = () => {
@@ -89,10 +91,14 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
     }
   };
   rec.onerror = (e) => {
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-      on = false;
-      say('Voice commands need microphone permission. They are off.');
-    }
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    on = false;
+    // Brave and some other browsers expose the API but block the speech service behind it ('network')
+    say(
+      e.error === 'not-allowed'
+        ? 'Voice commands need microphone permission. They are off.'
+        : `Voice commands are not working in this browser: ${e.error}. They are off. Chrome or Edge may work.`,
+    );
   };
   return () => {
     on = !on;
