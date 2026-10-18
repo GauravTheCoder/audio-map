@@ -989,9 +989,11 @@ export class Game {
     const w = this.world!;
     const rels: number[] = [];
     let droppedBehind = false;
+    // if no road behind carries the name we arrived on (one-way, filtered), nothing is the road we came from to drop by name
+    const arrivedBehind = j.exits.some((x) => Math.abs(relAngle(this.heading, w.edgeBearing(x.from, x.edge))) > 150 && x.edge.way.name === this.streetName);
     for (const { from, edge } of j.exits) {
       const rel = relAngle(this.heading, w.edgeBearing(from, edge));
-      if (Math.abs(rel) > 150 && (!droppedBehind || edge.way.name === this.streetName)) {
+      if (Math.abs(rel) > 150 && (edge.way.name === this.streetName || (!arrivedBehind && !droppedBehind))) {
         droppedBehind = true;
         continue;
       }
@@ -1408,12 +1410,14 @@ export class Game {
     let droppedBehind = false;
     const j = w.junction(n, this.filter, this.junctionRadius);
     const seen = new Set<string>();
+    // if no road behind carries the name we arrived on (one-way, filtered), only the first one behind is taken as the road we came from
+    const arrivedBehind = j.exits.some((x) => Math.abs(relAngle(ref, w.edgeBearing(x.from, x.edge))) > 150 && x.edge.way.name === arriveName);
     for (const { from, edge: e } of j.exits) {
       const b = w.edgeBearing(from, e);
       const rel = relAngle(ref, b);
       const a = Math.abs(rel);
       // the road we arrive on (both carriageways of a divided road)
-      if (a > 150 && (!droppedBehind || e.way.name === arriveName)) {
+      if (a > 150 && (e.way.name === arriveName || (!arrivedBehind && !droppedBehind))) {
         droppedBehind = true;
         continue;
       }
