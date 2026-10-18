@@ -40,7 +40,6 @@ export const THEMES: Record<SoundTheme, Record<Cue, CueTune>> = {
   },
 };
 
-export const nextTheme = (t: SoundTheme): SoundTheme => SOUND_THEMES[(SOUND_THEMES.indexOf(t) + 1) % SOUND_THEMES.length];
 
 export const THEME_TEXT: Record<SoundTheme, string> = {
   classic: 'Classic sounds.',

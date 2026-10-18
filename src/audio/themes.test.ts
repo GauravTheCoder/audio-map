@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CUES, nextTheme, SOUND_THEMES, THEME_TEXT, THEMES } from './themes';
+import { CUES, SOUND_THEMES, THEME_TEXT, THEMES } from './themes';
 
 describe('sound themes', () => {
   it('define every cue with sane numbers', () => {
@@ -14,8 +14,7 @@ describe('sound themes', () => {
       expect(THEME_TEXT[t]).toBeTruthy();
     }
   });
-  it('keeps classic unchanged and cycles', () => {
+  it('keeps classic unchanged', () => {
     for (const c of CUES) expect(THEMES.classic[c]).toEqual({ level: 1, pitch: 1 });
-    expect(nextTheme('distinct')).toBe('classic');
   });
 });

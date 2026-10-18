@@ -475,7 +475,7 @@ const openPalette = setupPalette(
     game?.focus(stage);
   },
   (x) => {
-    if (x.key === 'theme') game?.cycleTheme();
+    if (x.key.startsWith('theme:')) game?.setTheme(x.key.slice(6) as Settings['soundTheme']);
     else game?.run(x.key, x);
   },
 );
