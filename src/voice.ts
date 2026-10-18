@@ -94,10 +94,13 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
     if (e.error === 'no-speech' || e.error === 'aborted') return;
     on = false;
     // Brave and some other browsers expose the API but block the speech service behind it ('network')
+    const brave = 'brave' in navigator;
     say(
       e.error === 'not-allowed'
         ? 'Voice commands need microphone permission. They are off.'
-        : `Voice commands are not working in this browser: ${e.error}. They are off. Chrome or Edge may work.`,
+        : e.error === 'network'
+          ? `Voice commands cannot reach the speech service${brave ? ', which Brave blocks' : ''}. They are off. Chrome or Edge may work.`
+          : `Voice commands are not working in this browser: ${e.error}. They are off.`,
     );
   };
   return () => {
