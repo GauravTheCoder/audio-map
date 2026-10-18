@@ -2064,7 +2064,7 @@ export class Game {
       case 'o':
         return this.routePreview();
       case 'x':
-        return this.nearestTransit();
+        return c.shift ? this.nearestAccess() : this.nearestTransit();
       case 'y':
         return this.saveFavorite();
       case 'r':
@@ -2160,7 +2160,7 @@ export class Game {
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
-        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, Shift A toggles accessible walking routes, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, Shift A toggles accessible walking routes, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2614,6 +2614,17 @@ export class Game {
     const cur = this.dest ? stops.findIndex(({ p }) => p.x === this.dest!.x && p.y === this.dest!.y) : -1;
     const { p } = stops[(cur + 1) % stops.length];
     this.setTarget({ name: p.name, x: p.x, y: p.y });
+  }
+
+  /** Shift X: say the nearest entrances, platforms and lifts with direction and distance. */
+  private nearestAccess() {
+    const u = this.settings.units;
+    const list = this.world!.access
+      .map((a) => ({ a, d: dist(this.x, this.y, a.x, a.y) }))
+      .sort((p, q) => p.d - q.d)
+      .slice(0, 4)
+      .map(({ a, d }) => `${a.name ? `${a.kind} ${a.name}` : a.kind}, ${fmtDistance(d, u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, a.x, a.y)))}`);
+    this.speech.say(list.length ? `${list.join('. ')}.` : 'No entrances, platforms or lifts on the loaded map.', 'high');
   }
 
   private transitStops() {
