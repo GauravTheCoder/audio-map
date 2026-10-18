@@ -3111,6 +3111,7 @@ export class Game {
 
   /** Shift + V: delete the note you are standing at. */
   private deleteNote() {
+    this.loadNotes(); // another tab may have changed them, and the index below must match storage
     const here = this.notes.findIndex((n) => dist(this.x, this.y, n.x, n.y) < 25);
     if (here < 0) return this.speech.say('No note within 25 metres.', 'high');
     const all = loadNotes();

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Game, minutesText } from './game';
+import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
 import { World, type Place } from './world';
@@ -273,6 +274,14 @@ describe('notes', () => {
     game.run('v', { shift: true });
     expect(said.at(-1)).toBe('Note deleted.');
     expect(g.notes).toHaveLength(0);
+  });
+
+  it('Shift+V deletes the right note after another tab added one', () => {
+    const { game } = setup();
+    game.addNote('here');
+    saveNotes([{ text: 'elsewhere', lat: 10, lon: 10 }, ...loadNotes()]);
+    game.run('v', { shift: true });
+    expect(loadNotes().map((n) => n.text)).toEqual(['elsewhere']);
   });
 
   it('Shift+V far from any note reports none', () => {
