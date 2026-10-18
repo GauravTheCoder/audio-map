@@ -276,6 +276,7 @@ async function overpass(query: string, signal: AbortSignal, onRetry?: RetryNotic
       const json = (await res.json()) as { elements: OverpassEl[]; remark?: string };
       // Overpass reports timeouts and memory errors as a 200 with a remark and partial data.
       if (json.remark && /error|timed out|out of memory/i.test(json.remark)) throw new Error(json.remark);
+      if (!Array.isArray(json.elements)) throw new Error('Overpass sent no elements');
       void cachePut(key, json.elements);
       return json.elements;
     } catch (e) {
