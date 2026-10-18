@@ -86,3 +86,10 @@ describe('fuse with bad input', () => {
     }
   });
 });
+
+describe('motionBetween across the dateline', () => {
+  it('measures the short way round', () => {
+    const m = motionBetween({ lat: 0, lon: 179.9995, t: 0 }, { lat: 0, lon: -179.9995, t: 10_000 })!;
+    expect(m.speed).toBeLessThan(30);
+  });
+});

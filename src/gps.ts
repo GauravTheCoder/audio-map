@@ -77,7 +77,7 @@ export function motionBetween(a: { lat: number; lon: number; t: number }, b: { l
   const dt = (b.t - a.t) / 1000;
   if (dt < 0.5) return null;
   const R = 6_371_000;
-  const dx = ((b.lon - a.lon) * Math.PI) / 180 * R * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  const dx = (relAngle(a.lon, b.lon) * Math.PI) / 180 * R * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
   const dy = ((b.lat - a.lat) * Math.PI) / 180 * R;
   return { speed: Math.hypot(dx, dy) / dt, heading: normDeg((Math.atan2(dx, dy) * 180) / Math.PI) };
 }
