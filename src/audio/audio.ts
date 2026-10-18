@@ -588,7 +588,7 @@ class CarVoice implements VehicleVoice {
   private o2: OscillatorNode;
   private f: BiquadFilterNode;
   private gain: GainNode;
-  private rough: { gain: GainNode };
+  private rough: { src: AudioBufferSourceNode; gain: GainNode };
   private gear = 1;
   private static readonly GEARS = [0, 7, 14, 21, 28, 40]; // upper speed (m/s) for gears 1..5
   constructor(
@@ -624,7 +624,7 @@ class CarVoice implements VehicleVoice {
     rg.gain.value = 0;
     src.connect(rf).connect(rg).connect(out);
     src.start();
-    this.rough = { gain: rg };
+    this.rough = { src, gain: rg };
   }
   update(s: EngineState) {
     const t = this.a.now;
@@ -652,6 +652,7 @@ class CarVoice implements VehicleVoice {
   dispose() {
     this.o1.stop();
     this.o2.stop();
+    this.rough.src.stop();
     this.gain.disconnect();
     this.rough.gain.disconnect();
   }
@@ -660,13 +661,14 @@ class CarVoice implements VehicleVoice {
 class HelicopterVoice implements VehicleVoice {
   private lfo: OscillatorNode;
   private whine: OscillatorNode;
+  private src: AudioBufferSourceNode;
   private nodes: AudioNode[] = [];
   constructor(
     private a: AudioEngine,
     out: AudioNode,
   ) {
     const ctx = a.ctx;
-    const src = ctx.createBufferSource();
+    const src = (this.src = ctx.createBufferSource());
     src.buffer = a.noise;
     src.loop = true;
     const f = ctx.createBiquadFilter();
@@ -700,6 +702,7 @@ class HelicopterVoice implements VehicleVoice {
     this.whine.frequency.setTargetAtTime(1400 + r * 300, t, 0.3);
   }
   dispose() {
+    this.src.stop();
     this.lfo.stop();
     this.whine.stop();
     this.nodes.forEach((n) => n.disconnect());
