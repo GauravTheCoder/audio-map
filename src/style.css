@@ -270,6 +270,26 @@ h3 {
 .inline input {
   flex: 1;
 }
+.inline input[type='text'] {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 0;
+}
+/* Browser default placeholders are a faint grey; Firefox also dims them with opacity. */
+.inline input[type='text']::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+:root[data-display='high-contrast'] .inline input[type='text'] {
+  border-width: 2px;
+}
+:root[data-display='high-contrast'] .inline input[type='text']::placeholder {
+  color: #ffffff;
+}
 
 .results {
   list-style: none;
