@@ -1,11 +1,12 @@
 // Game loop: vehicle physics, road awareness, announcements and keyboard commands.
 
 import { AudioEngine } from './audio/audio';
+import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { fetchTileArea } from './tiles';
-import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass16, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
+import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
 import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
@@ -187,7 +188,7 @@ export class Game {
   private announcedBends = new Map<string, number>();
   private cuedBends = new Set<string>();
   /** N / Shift+N double press */
-  private lastNPress = 0;
+  private lastNPress = -Infinity;
   private lastNShift = false;
   /** the bend the last jump stopped at, so the next jump goes past it */
   private jumpBend = new Set<string>();
@@ -212,8 +213,8 @@ export class Game {
   private offRouteSince = -1;
   private lastRouteCalc = -1e9;
   private nextRouteCheck = 0;
-  private lastIPress = 0;
-  private lastDPress = 0;
+  private lastIPress = -Infinity;
+  private lastDPress = -Infinity;
   /** furthest along the route we have been, to notice going back along it */
   private furthestProg = 0;
   private lastWrongWay = -1e9;
@@ -255,7 +256,10 @@ export class Game {
     this.vehicle = VEHICLES[settings.vehicle];
     this.input.onCommand = (c) => this.command(c);
     this.input.onKeyUp = (code) => this.keyUp(code);
-    this.speech.onSpeakingChange = (s) => this.audio.duck(s);
+    this.speech.onSpeakingChange = (s) => {
+      this.speaking = s;
+      this.audio.duck(s, duckGain(this.speed));
+    };
   }
 
   // ---------------- lifecycle ----------------
@@ -317,7 +321,7 @@ export class Game {
     this.audio.loaded();
     const where = this.streetName ? `On ${this.streetName}` : 'Not on a road';
     this.speech.say(
-      `Ready. ${this.vehicle.name}. ${where}, facing ${compass16(this.heading)}.` +
+      `Ready. ${this.vehicle.name}. ${where}, facing ${compass8(this.heading)}.` +
         `${this.areaName ? ` ${this.areaName}.` : ''} ${world.ways.length} roads${world.places.length ? ` and ${world.places.length} places` : ''} loaded.` +
         ` Hold up arrow to move. Press F1 for help.`,
       'normal',
@@ -502,6 +506,7 @@ export class Game {
 
   pause() {
     this.paused = true;
+    this.calibrationTimers.forEach(clearTimeout);
     this.speed = 0;
     this.audio.update({ speed: 0, maxSpeed: 1, throttle: 0, surface: 'paved', tunnel: false }, STEP);
     this.audio.setRumble(0, 0, 10);
@@ -1391,7 +1396,7 @@ export class Game {
   private checkPlaces() {
     if (!this.settings.announcePlaces || this.speed < 0.3) return;
     // faster vehicles pass places quicker, so leave longer between cues
-    if (this.clock - this.lastPlaceSpoken < 1.2 + Math.min(2.8, this.speed / 6)) return;
+    if (this.clock - this.lastPlaceSpoken < placeSpeechGap(this.speed)) return;
     for (const { place, d } of this.world!.placesNear(this.x, this.y, this.vehicle.passRadius)) {
       if (!placeWanted(this.settings, this.vehicle.id, place)) continue;
       const last = this.announcedPlaces.get(place.id) ?? -1e9;
@@ -1401,8 +1406,9 @@ export class Game {
       this.announcedPlaces.set(place.id, this.clock);
       // nearer is louder and clearer; landmarks stand out over everyday places
       const far = Math.min(1, d / this.vehicle.passRadius);
-      this.audio.placeCue(place.group, rel, (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1), undefined, far);
-      this.speech.say(`${place.name}, ${place.category}, ${sideWord(rel)}${d > 15 ? `, ${fmtDistance(d, this.settings.units)}` : ''}`, 'low');
+      const level = (0.1 + 0.2 * (1 - far)) * (placeTier(place) >= 2 ? 1.4 : 1) * cueLevelScale(this.speed, this.speaking);
+      this.audio.placeCue(place.group, rel, level, undefined, far);
+      this.speech.say(placeSpeech(place.name, place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
       this.lastPlaceSpoken = this.clock;
       break;
     }
@@ -1700,7 +1706,7 @@ export class Game {
   private instructions() {
     const now = performance.now();
     const double = now - this.lastIPress < 400;
-    this.lastIPress = double ? 0 : now; // a third quick press starts over
+    this.lastIPress = double ? -Infinity : now; // a third quick press starts over
     if (!this.dest) return this.speech.say('No destination. Press Control D to choose one.', 'high');
     const r = this.route;
     if (!r) {
@@ -1974,7 +1980,8 @@ export class Game {
       case 'k':
         return this.help();
       case 'h':
-        return this.speech.say(`Facing ${compass16(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
+        if (c.shift) return this.calibrate();
+        return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
       case 's':
         return this.speech.say(
           this.speed < 0.1 ? 'Stopped.' : `${fmtSpeed(this.speed, u)}.`,
@@ -1986,7 +1993,7 @@ export class Game {
         // pressed twice quickly: move there
         const now = performance.now();
         const double = now - this.lastNPress < 400 && this.lastNShift === c.shift;
-        this.lastNPress = double ? 0 : now; // a third quick press starts over
+        this.lastNPress = double ? -Infinity : now; // a third quick press starts over
         this.lastNShift = c.shift;
         if (double) return this.jump(c.shift ? -1 : 1);
         return c.shift ? this.previousIntersection() : this.nextIntersection();
@@ -2059,7 +2066,7 @@ export class Game {
         // pressed twice quickly: switch walking routes between shortest and streets only
         const now = performance.now();
         const double = now - this.lastDPress < 400;
-        this.lastDPress = double ? 0 : now;
+        this.lastDPress = double ? -Infinity : now;
         return double ? this.toggleWalkRoute() : this.distanceToGo();
       }
       case 'm':
@@ -2116,6 +2123,21 @@ export class Game {
     }
   }
 
+  private speaking = false;
+  private calibrationTimers: number[] = [];
+
+  /** Says "left", plays a tone there, then the same for right and ahead. */
+  private calibrate() {
+    this.calibrationTimers.forEach(clearTimeout);
+    this.speech.say('Headphone check. You should hear each tone from the side named.', 'high');
+    // timed for the default rate; a slower built-in voice needs longer so "Left" does not cut off the intro
+    const slow = this.settings.speechMode === 'voice' ? Math.max(1, 1.3 / this.settings.voiceRate) : 1;
+    this.calibrationTimers = ([['Left', -90], ['Right', 90], ['Ahead', 0]] as const).flatMap(([word, rel], i) => [
+      window.setTimeout(() => this.speech.say(word, 'high'), (4000 + i * 2200) * slow),
+      window.setTimeout(() => this.audio.testTone(rel), (4000 + i * 2200) * slow + 800),
+    ]);
+  }
+
   private help() {
     this.speech.say(
       'Up arrow accelerate, down arrow slow down, slash brake. Left and right turn 1 degree, with shift 10 degrees; hold to keep turning. ' +
@@ -2123,7 +2145,7 @@ export class Game {
         'H heading, S speed, L location, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. F2 opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
-        'Page up and down change volume. F searches for a location. Escape opens the menu.',
+        'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
     );
   }
@@ -2984,11 +3006,16 @@ export class Game {
     this.onHud?.({
       street: this.streetName ?? (this.onRoad ? '' : 'Off road'),
       speed: fmtSpeedShort(this.speed, u),
-      heading: `${Math.round(this.heading)}° ${compass16(this.heading)}`,
+      heading: `${Math.round(this.heading)}° ${compass8(this.heading)}`,
       area: this.areaName,
       destination,
       status: this.loading ? 'Loading map data…' : '',
     });
+  }
+
+  /** What the tutorial checks to see that a key did something. */
+  get snap() {
+    return { ready: !!this.world, speed: this.speed, heading: this.heading, vehicle: this.vehicle.id as string, hasDest: !!this.dest };
   }
 
   /** Convert a lat/lon to world coordinates (for teleport targets found by search). */

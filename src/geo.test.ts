@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Projection, alongLine, bearing, clockDir, compass16, compass8, dist, findBend, normDeg, pointSeg, relAngle, sideWord } from './geo';
+import { Projection, alongLine, bearing, clockDir, compass8, dist, findBend, normDeg, pointSeg, relAngle, sideWord } from './geo';
 
 describe('angles', () => {
   it('normDeg wraps negatives and large values', () => {
@@ -44,7 +44,7 @@ describe('spoken helpers', () => {
     expect(compass8(0)).toBe('north');
     expect(compass8(359)).toBe('north');
     expect(compass8(135)).toBe('south-east');
-    expect(compass16(22.5)).toBe('north-north-east');
+    expect(compass8(22.5)).toBe('north-east');
   });
   it('clockDir maps relative angle to a clock face', () => {
     expect(clockDir(0)).toBe("12 o'clock");
