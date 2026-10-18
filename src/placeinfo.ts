@@ -91,7 +91,8 @@ export function locate(world: World, x: number, y: number, units: Units, leftHan
     if (perp !== null) add(perp);
     const toSpot = bearing(best.n.x, best.n.y, x, y);
     if (dist(best.n.x, best.n.y, x, y) > 1) add(normDeg(best.dir + (relAngle(best.dir, toSpot) >= 0 ? 90 : -90)));
-    const where = vx || vy ? `${compass8(bearing(0, 0, vx, vy))} corner` : '';
+    // opposite sides cancel to ~1e-16 rather than exactly 0, which would name a random corner
+    const where = Math.hypot(vx, vy) > 1e-6 ? `${compass8(bearing(0, 0, vx, vy))} corner` : '';
     const fromCross = best.d > 3 ? along(roadDir, bearing(best.n.x, best.n.y, h.px, h.py)) : undefined;
     return { street, where, of: `of ${street} and ${best.name}`, corner: true, cross: best.name, travel, fromCross };
   }
