@@ -608,7 +608,7 @@ export class Game {
 
   private frame = (t: number) => {
     requestAnimationFrame(this.frame);
-    const dt = Math.min(0.25, (t - this.lastFrame) / 1000);
+    const dt = Math.max(0, Math.min(0.25, (t - this.lastFrame) / 1000)); // resume() can stamp a time later than this frame's
     this.lastFrame = t;
     if (this.paused || !this.world) return;
     this.acc += dt;
