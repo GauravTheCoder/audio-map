@@ -765,3 +765,114 @@ describe('hold (touch and voice)', () => {
     expect(said.at(-1)).toBe('Stopped.');
   });
 });
+
+describe('grid mode and destinations', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  // Oak Street runs north at x = 0, Elm Street east at y = 200; the destination is on Elm, east of Oak
+  async function routed() {
+    const h = setup();
+    h.g.areas = { at: vi.fn(async () => ({ key: 'open', kind: 'open ground', sound: 'open' })), has: () => true };
+    h.g.loadCenter = { x: 0, y: 0 };
+    h.game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    h.game.run('F3');
+    await flush();
+    return h;
+  }
+
+  it('N finds the nearest intersection in grid terms; twice steps onto it', async () => {
+    const { game, said, g } = await routed();
+    game.run('n');
+    expect(said.at(-1)).toBe('Oak Street and Elm Street, 150 metres north. Press N twice to step onto it.');
+    g.lastNPress = performance.now(); // as if pressed a moment ago
+    game.run('n');
+    await flush();
+    expect(g.y).toBeCloseTo(200);
+    expect(g.heading).toBe(0);
+    expect(said.at(-1)).toMatch(/^Oak Street and Elm Street\./);
+  });
+
+  it('N looks the way the last arrow went, Shift N the other way', async () => {
+    const { game, said, g } = await routed();
+    // Oak Street (x = 0) crossed by Pine Street (y = -150) and Elm Street (y = 200); Ash Street at x = 300
+    const pts: [number, number, number][] = [
+      [1, 0, -300], [2, 0, -150], [3, 0, 200], [4, 0, 400],
+      [5, -200, 200], [6, 300, 200], [7, -200, -150], [8, 300, -150], [9, 300, -300], [10, 300, 400],
+    ];
+    g.world = new World(proj, {
+      nodes: new Map(pts.map(([id, x, y]) => [id, ll(x, y)])),
+      ways: [
+        { id: 1, nodes: [1, 2, 3, 4], tags: { highway: 'residential', name: 'Oak Street' } },
+        { id: 2, nodes: [5, 3, 6], tags: { highway: 'residential', name: 'Elm Street' } },
+        { id: 3, nodes: [7, 2, 8], tags: { highway: 'residential', name: 'Pine Street' } },
+        { id: 4, nodes: [9, 8, 6, 10], tags: { highway: 'residential', name: 'Ash Street' } },
+      ],
+    });
+    g.x = 0;
+    g.y = 50;
+    game.run('n'); // no arrow yet: nearest of all
+    expect(said.at(-1)).toBe('Oak Street and Elm Street, 150 metres north. Press N twice to step onto it.');
+    game.run('ArrowRight');
+    g.lastNPress = -Infinity;
+    game.run('n');
+    expect(said.at(-1)).toBe('East: Elm Street and Ash Street, 150 metres north and 290 metres east. Press N twice to step onto it.');
+    g.lastNPress = -Infinity;
+    game.run('ArrowUp');
+    game.run('n');
+    expect(said.at(-1)).toMatch(/^North: Oak Street and Elm Street, 140 metres north and 10 metres west\./);
+    g.lastNPress = -Infinity;
+    game.run('N', { shift: true });
+    expect(said.at(-1)).toMatch(/^South: Oak Street and Pine Street, 210 metres south and 10 metres west\. Press Shift N twice/);
+    g.lastNPress = -Infinity;
+    g.x = -150;
+    g.y = 300;
+    game.run('ArrowUp'); // nothing to the north from here
+    g.lastNPress = -Infinity;
+    game.run('n');
+    expect(said.at(-1)).toMatch(/^No intersection to the north within 500 metres\. Nearest: Oak Street and Elm Street/);
+  });
+
+  it('lists places by compass direction rather than clock', async () => {
+    const { game, said } = await routed();
+    game.run('w');
+    expect(said.at(-1)).toBe('Blue Cafe, cafe, 50 metres north.');
+  });
+
+  it('steps say where you are, not route turns', async () => {
+    const { game, said, g } = await routed();
+    expect(g.route).not.toBeNull(); // planned before grid mode
+    game.run('ArrowUp');
+    await flush();
+    expect(said.at(-1)).toBe('Oak Street.');
+  });
+
+  it('I says turn by turn pauses, and where the destination is', async () => {
+    const { game, said } = await routed();
+    game.run('i');
+    expect(said.at(-1)).toBe('Turn by turn pauses in grid mode. Elm End is 150 metres north and 150 metres east; follow the beacon.');
+  });
+
+  it('a destination chosen in grid mode plans no route until grid mode ends', async () => {
+    const h = setup();
+    h.g.areas = { at: vi.fn(async () => ({ key: 'open', kind: 'open ground', sound: 'open' })), has: () => true };
+    h.g.loadCenter = { x: 0, y: 0 };
+    h.game.run('F3');
+    await flush();
+    h.game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    expect(h.g.route).toBeNull();
+    expect(h.said).toContain('Destination Elm End, 150 metres north and 150 metres east. Follow the beacon.');
+    expect(h.said.join(' ')).not.toMatch(/Route \d|Turn around|turn (left|right)|o'clock/);
+    h.game.run('F3');
+    await flush();
+    expect(h.g.route).not.toBeNull();
+    expect(h.said.join(' ')).toMatch(/Grid mode off\..*Route \d+ metres/);
+  });
+
+  it('G gives the destination in yards with imperial units', async () => {
+    const { game, said, g } = await routed();
+    g.settings.units = 'imperial';
+    game.run('g');
+    expect(said.at(-1)).toContain('Elm End, 160 yards north and 160 yards east');
+  });
+});

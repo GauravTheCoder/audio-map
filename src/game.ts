@@ -171,7 +171,8 @@ export class Game {
   private gpsPoor = false;
   private restartingForGps = false;
   /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
-  private grid: { key: string | null; req: number } | null = null;
+  /** key: the area last spoken; dir: the way the last arrow stepped, where N looks */
+  private grid: { key: string | null; req: number; dir?: number } | null = null;
   private gridStepIdx = 1;
   private areas = new AreaMap();
   /** what to say about each place's exact spot, worked out on first use (reset with the map) */
@@ -446,7 +447,7 @@ export class Game {
       if (this.world) this.swapWorld(world);
       else this.world = world;
       installed = true;
-      if (this.dest && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
+      if (this.dest && !this.grid && this.settings.turnByTurn && (!this.route || this.route.partial) && this.clock - this.lastRouteCalc > 10) void this.computeRoute(false);
       this.loadCenter = at;
       // the area name is nice to have, not worth holding up the start for
       const area = await Promise.race([areaP, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
@@ -1523,8 +1524,7 @@ export class Game {
     const mark = MILESTONES.find((m) => remaining <= m);
     if (mark !== undefined && mark < this.destMilestone) {
       this.destMilestone = mark;
-      const rel = relAngle(this.heading, bearingTo(this.x, this.y, this.dest.x, this.dest.y));
-      this.speech.say(`${this.dest.name}, ${fmtDistance(remaining, this.settings.units)}${r ? ' to go' : ` at ${clockDir(rel)}`}.`, 'low');
+      this.speech.say(`${this.dest.name}, ${fmtDistance(remaining, this.settings.units)}${r ? ' to go' : ` ${this.dirTo(this.dest.x, this.dest.y)}`}.`, 'low');
     }
   }
 
@@ -1788,6 +1788,7 @@ export class Game {
     const double = now - this.lastIPress < 400;
     this.lastIPress = double ? -Infinity : now; // a third quick press starts over
     if (!this.dest) return this.speech.say(`No destination. Press ${this.keyText('navigate')} to choose one.`, 'high');
+    if (this.grid) return this.speech.say(`Turn by turn pauses in grid mode. ${this.dest.name} is ${this.gridOffset(this.dest.x, this.dest.y)}; follow the beacon.`, 'high');
     const r = this.route;
     if (!r) {
       const why = !this.settings.turnByTurn
@@ -2096,6 +2097,7 @@ export class Game {
         const double = now - this.lastNPress < 400 && this.lastNShift === back;
         this.lastNPress = double ? -Infinity : now; // a third quick press starts over
         this.lastNShift = back;
+        if (this.grid) return this.gridIntersection(double, back);
         if (double) return this.jump(back ? -1 : 1);
         return back ? this.previousIntersection() : this.nextIntersection();
       }
@@ -2286,7 +2288,7 @@ export class Game {
       const hit = this.world!.nearestRoad(this.x, this.y, 150, (w) => w.named);
       parts.push(
         hit
-          ? `Off road. ${hit.seg.way.name} is ${fmtDistance(hit.hit.dist, this.settings.units)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, hit.hit.px, hit.hit.py)))}`
+          ? `Off road. ${hit.seg.way.name} is ${fmtDistance(hit.hit.dist, this.settings.units)} ${this.dirTo(hit.hit.px, hit.hit.py)}`
           : 'Off road, no streets nearby',
       );
     }
@@ -2733,7 +2735,7 @@ export class Game {
       .map((a) => ({ a, d: dist(this.x, this.y, a.x, a.y) }))
       .sort((p, q) => p.d - q.d)
       .slice(0, 4)
-      .map(({ a, d }) => `${a.name ? `${a.kind} ${a.name}` : a.kind}, ${fmtDistance(d, u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, a.x, a.y)))}`);
+      .map(({ a, d }) => `${a.name ? `${a.kind} ${a.name}` : a.kind}, ${fmtDistance(d, u)} ${this.dirTo(a.x, a.y)}`);
     this.speech.say(list.length ? `${list.join('. ')}.` : 'No entrances, platforms or lifts on the loaded map.', 'high');
   }
 
@@ -2829,7 +2831,7 @@ export class Game {
   /** E: everything for when you are lost: street, area, nearest landmark and nearest transit stop. */
   private async whereAmI() {
     const u = this.settings.units;
-    const at = (p: Place) => `${this.placeText(p, true)}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y)))}`;
+    const at = (p: Place) => `${this.placeText(p, true)}, ${fmtDistance(dist(this.x, this.y, p.x, p.y), u)} ${this.dirTo(p.x, p.y)}`;
     const near = this.world!.placesNear(this.x, this.y, 400);
     const landmark = (near.find((n) => placeTier(n.place) >= 1) ?? near[0])?.place;
     const stop = this.transitStops()[0]?.p;
@@ -2862,7 +2864,7 @@ export class Game {
     const list = this.nearby(this.vehicle.scanRadius).slice(0, 6);
     if (!list.length) return this.speech.say(`No ${this.filterLabel()}places within ${fmtDistance(this.vehicle.scanRadius, this.settings.units)}.`, 'high');
     const text = list
-      .map(({ place, d }) => `${this.placeText(place)}, ${fmtDistance(d, this.settings.units)} at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`)
+      .map(({ place, d }) => `${this.placeText(place)}, ${fmtDistance(d, this.settings.units)} ${this.dirTo(place.x, place.y)}`)
       .join('. ');
     this.speech.say(text + '.', 'high');
   }
@@ -2884,7 +2886,10 @@ export class Game {
       if (hit && hit.hit.dist <= roadHalfWidth(hit.seg.way.type) + 4) this.place(hit.hit.px, hit.hit.py, Math.abs(relAngle(0, hit.dir)) <= 90 ? hit.dir : hit.dir + 180, null);
       else this.updateRoad(true);
       const on = this.streetName ? `On ${this.streetName}, facing` : 'Facing';
-      return this.speech.say(`Grid mode off. ${on} ${compass8(this.heading)}.`, 'high');
+      this.speech.say(`Grid mode off. ${on} ${compass8(this.heading)}.`, 'high');
+      // turn by turn resumes: plan afresh from wherever the grid left you
+      if (this.dest && this.settings.turnByTurn && this.vehicle.id !== 'helicopter') void this.computeRoute(true);
+      return;
     }
     if (this.live) return this.speech.say('Live GPS is on. Shift L turns it off first.', 'high');
     // face north and stay so: the beacon and clock directions then read as a north-up map
@@ -2924,6 +2929,7 @@ export class Game {
   private gridMove(dx: number, dy: number) {
     const m = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
     if (this.trip) this.trip.meters += m;
+    this.grid!.dir = bearingTo(0, 0, dx, dy); // N looks this way
     this.place(this.x + dx * m, this.y + dy * m, 0, null);
     void this.gridLook(true);
   }
@@ -2980,6 +2986,73 @@ export class Game {
     this.speech.say(`${prefix} ${cap(areaText(area))}.${suffix}${loading}`.trim(), 'high');
   }
 
+  /** A grid distance in the grid's own unit (metres, or yards with imperial units), so steps can be counted. */
+  private gridDistance(m: number): string {
+    const imperial = this.settings.units === 'imperial';
+    const v = imperial ? m / 0.9144 : m;
+    if (!imperial && v >= 1000) return `${(v / 1000).toFixed(1)} kilometres`;
+    const n = v < 50 ? Math.round(v) : v < 500 ? Math.round(v / 10) * 10 : Math.round(v / 50) * 50;
+    return `${n} ${imperial ? 'yard' : 'metre'}${n === 1 ? '' : 's'}`;
+  }
+
+  /** "80 metres north and 10 metres east": how far to step each way to reach a point. */
+  private gridOffset(x: number, y: number): string {
+    const dx = x - this.x;
+    const dy = y - this.y;
+    const min = this.settings.units === 'imperial' ? 0.9144 / 2 : 0.5; // under half the smallest step
+    const parts: string[] = [];
+    if (Math.abs(dy) >= min) parts.push(`${this.gridDistance(Math.abs(dy))} ${dy > 0 ? 'north' : 'south'}`);
+    if (Math.abs(dx) >= min) parts.push(`${this.gridDistance(Math.abs(dx))} ${dx > 0 ? 'east' : 'west'}`);
+    return parts.join(' and ');
+  }
+
+  /** Where a point lies from here: a compass direction in grid mode (no way you face), else a clock direction. */
+  private dirTo(x: number, y: number): string {
+    return this.grid ? compass8(bearingTo(this.x, this.y, x, y)) : `at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, x, y)))}`;
+  }
+
+  /**
+   * N in grid mode: the nearest intersection the way the last arrow went (within 45 degrees either
+   * side), Shift N the other way, and how far each way it is. Pressed twice, step onto it. Before any
+   * arrow, or with none that way, the nearest in any direction.
+   */
+  private gridIntersection(move: boolean, back: boolean) {
+    const w = this.world!;
+    const g = this.grid!;
+    const want = g.dir === undefined ? undefined : normDeg(g.dir + (back ? 180 : 0));
+    const R = 500;
+    let any: { n: GNode; d: number } | null = null;
+    let ahead: { n: GNode; d: number } | null = null;
+    for (const n of w.nodesNear(this.x, this.y, R)) {
+      if (!w.isIntersection(n, this.filter)) continue;
+      const d = dist(this.x, this.y, n.x, n.y);
+      if (!any || d < any.d) any = { n, d };
+      // not the one we stand on: the next one that way
+      if (want !== undefined && d > 2 && Math.abs(relAngle(want, bearingTo(this.x, this.y, n.x, n.y))) <= 45 && (!ahead || d < ahead.d)) ahead = { n, d };
+    }
+    const way = want === undefined ? '' : compass8(want);
+    const best = want === undefined ? any : ahead;
+    let lead = '';
+    if (!best) {
+      if (!any) return this.speech.say(`No intersection within ${this.gridDistance(R)}.`, 'high');
+      return this.speech.say(`No intersection to the ${way} within ${this.gridDistance(R)}. Nearest: ${this.intersectionLabel(any.n)}, ${this.gridOffset(any.n.x, any.n.y) || 'here'}.`, 'high');
+    }
+    if (way) lead = `${cap(way)}: `;
+    const label = this.intersectionLabel(best.n);
+    if (move) {
+      this.place(best.n.x, best.n.y, 0, null);
+      return void this.gridLook(true, `${label}.`);
+    }
+    const off = this.gridOffset(best.n.x, best.n.y);
+    this.speech.say(off ? `${lead}${label}, ${off}. Press ${back ? 'Shift N' : 'N'} twice to step onto it.` : `You are at ${label}.`, 'high');
+  }
+
+  /** "Oak Street and Elm Street" */
+  private intersectionLabel(n: GNode): string {
+    const names = [...new Set(n.edges.filter((e) => e.way.named).map((e) => e.way.name))];
+    return names.length ? names.slice(0, 3).join(' and ') : 'Intersection';
+  }
+
   private sonar() {
     const list = this.nearby(this.vehicle.scanRadius).slice(0, 14);
     this.audio.sonarStart();
@@ -3005,7 +3078,7 @@ export class Game {
     const d = dist(this.x, this.y, p.x, p.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, p.x, p.y));
     this.audio.placeCue(p.group, rel, 0.3);
-    this.speech.say(`${this.placeText(p)}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}. ${b.idx + 1} of ${b.list.length}`, 'high');
+    this.speech.say(`${this.placeText(p)}, ${fmtDistance(d, this.settings.units)} ${this.dirTo(p.x, p.y)}. ${b.idx + 1} of ${b.list.length}`, 'high');
   }
 
   private setDestination() {
@@ -3028,8 +3101,10 @@ export class Game {
     this.map.setDestination(this.proj.toLatLon(t.x, t.y));
     const d = dist(this.x, this.y, t.x, t.y);
     const rel = relAngle(this.heading, bearingTo(this.x, this.y, t.x, t.y));
-    const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter';
-    this.speech.say(`Destination ${t.name}${t.detail ? `, ${t.detail}` : ''}, ${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}.${guided ? '' : ' Follow the beacon.'}`, 'high');
+    // turn by turn pauses in grid mode (there is no way you face); it is planned on leaving
+    const guided = this.settings.turnByTurn && this.vehicle.id !== 'helicopter' && !this.grid;
+    const where = this.grid ? this.gridOffset(t.x, t.y) : `${fmtDistance(d, this.settings.units)} at ${clockDir(rel)}`;
+    this.speech.say(`Destination ${t.name}${t.detail ? `, ${t.detail}` : ''}, ${where}.${guided ? '' : ' Follow the beacon.'}`, 'high');
     if (guided) void this.computeRoute(true);
     else this.clearRoute();
     void this.lookUpLines(t);
@@ -3202,7 +3277,8 @@ export class Game {
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     const b = bearingTo(this.x, this.y, this.dest.x, this.dest.y);
     const t = this.dest;
-    const straight = `${t.name}${t.detail ? `, ${t.detail}` : ''}, ${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
+    const where = this.grid ? this.gridOffset(t.x, t.y) : `${fmtDistance(d, u)} ${compass8(b)}, at ${clockDir(relAngle(this.heading, b))}`;
+    const straight = `${t.name}${t.detail ? `, ${t.detail}` : ''}, ${where}`;
     const lines = t.lines ? ` ${t.lines}` : '';
     const r = this.route;
     if (!r) return this.speech.say(`${straight}.${lines}`, 'high');
@@ -3341,7 +3417,7 @@ export class Game {
     let destination = '';
     if (this.dest) {
       const d = dist(this.x, this.y, this.dest.x, this.dest.y);
-      destination = `${this.dest.name} · ${fmtDistance(d, u)} · ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, this.dest.x, this.dest.y)))}`;
+      destination = `${this.dest.name} · ${fmtDistance(d, u)} · ${this.dirTo(this.dest.x, this.dest.y)}`;
       const m = this.upcoming();
       if (m && m.kind !== 'arrive') destination += ` · ${this.stepText(m, this.dest.name)} in ${fmtDistance(m.d - this.routeProg, u)}`;
     }
