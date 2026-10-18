@@ -48,6 +48,12 @@ describe('crossingExtras', () => {
     expect(crossingExtras({ crossing: 'island', tactile_paving: 'yes' })).toEqual(['island in the middle', 'tactile paving']);
     expect(crossingExtras({})).toEqual([]);
   });
+
+  it('reads kerb height, missing tactile paving and countdown timers', () => {
+    expect(crossingExtras({ kerb: 'flush', tactile_paving: 'no' })).toEqual(['no tactile paving', 'flush kerb, no edge to feel']);
+    expect(crossingExtras({ kerb: 'lowered', 'traffic_signals:countdown': 'yes' })).toEqual(['countdown timer', 'lowered kerb']);
+    expect(crossingExtras({ kerb: 'rolled' })).toEqual([]);
+  });
 });
 
 describe('accessKind', () => {

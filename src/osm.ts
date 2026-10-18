@@ -173,6 +173,10 @@ export function crossingExtras(t: Record<string, string>): string[] {
   else if (t.button_operated === 'yes') out.push('push button');
   if (t['crossing:island'] === 'yes' || t.crossing === 'island') out.push('island in the middle');
   if (t.tactile_paving === 'yes') out.push('tactile paving');
+  else if (t.tactile_paving === 'no') out.push('no tactile paving');
+  if (t['traffic_signals:countdown'] === 'yes') out.push('countdown timer');
+  const kerb = { raised: 'raised kerb', lowered: 'lowered kerb', flush: 'flush kerb, no edge to feel' }[t.kerb as 'raised'];
+  if (kerb) out.push(kerb);
   return out;
 }
 
