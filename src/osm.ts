@@ -35,7 +35,18 @@ export interface RawPlaces {
   access?: { lat: number; lon: number; kind: AccessKind; name?: string }[];
   /** where a path tagged lit=no begins; only an explicit tag counts, since most paths carry none */
   unlit?: LatLon[];
+  facilities?: { lat: number; lon: number; kind: string }[];
 }
+
+/** Street furniture and services worth finding on a walk, whether or not they are named. */
+export const FACILITIES: Record<string, string> = {
+  toilets: 'toilets',
+  bench: 'bench',
+  drinking_water: 'drinking water',
+  shelter: 'shelter',
+  post_box: 'post box',
+  atm: 'cash machine',
+};
 
 export type AccessKind = 'entrance' | 'platform' | 'lift';
 
@@ -158,6 +169,7 @@ out qt;
   nwr["railway"="platform"];
   node["highway"="elevator"];
   node["elevator"="yes"];
+  nwr["amenity"~"^(${Object.keys(FACILITIES).join('|')})$"];
 );
 out center tags qt;
 way["highway"~"^(footway|path|cycleway|track|pedestrian|steps)$"]["lit"="no"];
@@ -188,6 +200,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
   const crossings: NonNullable<RawPlaces['crossings']> = [];
   const access: NonNullable<RawPlaces['access']> = [];
   const unlit: LatLon[] = [];
+  const facilities: NonNullable<RawPlaces['facilities']> = [];
   // door node id -> places whose outline it is on
   const doorOf = new Map<number, RawPlace[]>();
   const doors: OverpassEl[] = [];
@@ -204,6 +217,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat === undefined || lon === undefined) continue;
+    if (t.amenity && FACILITIES[t.amenity]) facilities.push({ lat, lon, kind: FACILITIES[t.amenity] });
     const kind = accessKind(t);
     if (kind && !SKIP_DOOR.test(t.entrance ?? '')) access.push({ lat, lon, kind, name: t.name ?? t.ref });
     if (t.entrance && el.type === 'node' && !t.amenity && !t.shop && !t.railway && !t.highway) {
@@ -240,7 +254,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     if (SKIP_DOOR.test(d.tags!.entrance)) continue;
     for (const p of doorOf.get(d.id) ?? []) (p.entrances ??= []).push({ lat: d.lat!, lon: d.lon!, tags: d.tags! });
   }
-  return { places, signals, crossings, access, unlit };
+  return { places, signals, crossings, access, unlit, facilities };
 }
 
 /** A named building or piece of ground, with its outline (for grid mode, where the tiles carry no names). */

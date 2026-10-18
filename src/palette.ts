@@ -67,6 +67,7 @@ export const ACTIONS: Action[] = [
   a('Next bus stop or station', 'transit'),
   a('Nearest entrances, platforms and lifts', 'nearestAccess'),
   a('Next departures at a stop', 'departures'),
+  a('Nearest toilets, benches and other facilities', 'facilities'),
   a('Save this place', 'saveFavorite'),
   a('Walker', 'walker'),
   a('Bicycle', 'bicycle'),

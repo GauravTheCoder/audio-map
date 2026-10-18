@@ -1031,6 +1031,19 @@ describe('phone screen', () => {
     expect(said.at(-1)).toBe('Could not save the area. Check your connection.');
   });
 
+  it('Shift O says the nearest of each kind of facility', () => {
+    const { game, said, g } = setup();
+    game.run('O', { shift: true });
+    expect(said.at(-1)).toBe('No toilets, benches or other facilities on the loaded map.');
+    g.world.addPlaces({
+      places: [],
+      signals: new Set<number>(),
+      facilities: [{ ...ll(0, 90), kind: 'bench' }, { ...ll(0, 300), kind: 'bench' }, { ...ll(0, 250), kind: 'toilets' }],
+    });
+    game.run('O', { shift: true });
+    expect(said.at(-1)).toBe("Bench, 40 metres at 12 o'clock. Toilets, 200 metres at 12 o'clock.");
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');

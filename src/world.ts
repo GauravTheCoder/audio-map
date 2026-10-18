@@ -235,6 +235,7 @@ export class World {
   readonly nodes = new Map<number, GNode>();
   readonly ways: Way[] = [];
   readonly places: Place[] = [];
+  readonly facilities: { kind: string; x: number; y: number }[] = [];
   readonly access: { kind: AccessKind; name?: string; x: number; y: number }[] = [];
   private segGrid = new Grid<Segment>(60);
   private nodeGrid = new Grid<GNode>(80);
@@ -338,6 +339,7 @@ export class World {
     for (const c of raw.crossings ?? []) this.addHazard(c.text, c, c.extras);
     for (const u of raw.unlit ?? []) this.addHazard('Unlit path', u);
     const proj = this.proj;
+    for (const f of raw.facilities ?? []) this.facilities.push({ kind: f.kind, ...proj.toXY(f.lat, f.lon) });
     for (const a of raw.access ?? []) this.access.push({ kind: a.kind, name: a.name, ...proj.toXY(a.lat, a.lon) });
     const seen = new Set<string>();
     for (const rp of raw.places) {
