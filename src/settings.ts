@@ -101,6 +101,7 @@ export function saveSettings(s: Settings): void {
 }
 
 export function fmtDistance(m: number, units: Units): string {
+  m = Math.max(0, m); // progress along a route can overshoot its end
   if (units === 'imperial') {
     const ft = m * 3.28084;
     if (ft < 1000) return `${roundTo(ft, ft < 100 ? 10 : 50)} feet`;

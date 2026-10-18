@@ -10,6 +10,9 @@ describe('fmtDistance', () => {
     expect(fmtDistance(1000, 'metric')).toBe('1.0 kilometres');
     expect(fmtDistance(12_400, 'metric')).toBe('12 kilometres');
   });
+  it('never says a negative distance', () => {
+    for (const u of ['metric', 'imperial'] as const) expect(fmtDistance(-12, u)).toBe(fmtDistance(0, u));
+  });
   it('imperial uses feet then miles', () => {
     expect(fmtDistance(10, 'imperial')).toBe('30 feet');
     expect(fmtDistance(100, 'imperial')).toBe('350 feet');
