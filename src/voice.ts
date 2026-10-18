@@ -65,7 +65,7 @@ function recognitionCtor(): (new () => Recognition) | undefined {
 }
 
 /** Returns a toggle, or null when the browser has no speech recognition. */
-export function setupVoice(getGame: () => Driver | null, say: (s: string) => void): (() => boolean) | null {
+export function setupVoice(getGame: () => Driver | null, say: (s: string) => void, onChange: (on: boolean) => void): (() => boolean) | null {
   const Ctor = recognitionCtor();
   if (!Ctor) return null;
   const rec = new Ctor();
@@ -88,11 +88,13 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
       rec.start();
     } catch {
       on = false;
+      onChange(false);
     }
   };
   rec.onerror = (e) => {
     if (e.error === 'no-speech' || e.error === 'aborted') return;
     on = false;
+    onChange(false);
     // Brave and some other browsers expose the API but block the speech service behind it ('network')
     const brave = 'brave' in navigator;
     say(
@@ -107,6 +109,7 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
     on = !on;
     if (on) rec.start();
     else rec.stop();
+    onChange(on);
     say(`Voice commands ${on ? 'on' : 'off'}.`);
     return on;
   };

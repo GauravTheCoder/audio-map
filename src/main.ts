@@ -573,16 +573,20 @@ document.addEventListener(
 setupTouch(stage, () => game);
 
 const voiceBtn = $<HTMLButtonElement>('voice-btn');
-const toggleVoice = setupVoice(() => game, (s) => speech.say(s, 'high'));
+const toggleVoice = setupVoice(
+  () => game,
+  (s) => speech.say(s, 'high'),
+  (on) => voiceBtn.setAttribute('aria-pressed', String(on)),
+);
 if (toggleVoice) {
-  voiceBtn.addEventListener('click', () => voiceBtn.setAttribute('aria-pressed', String(toggleVoice())));
+  voiceBtn.addEventListener('click', toggleVoice);
 } else {
   voiceBtn.hidden = true;
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'F4') return;
   e.preventDefault();
-  if (toggleVoice) voiceBtn.setAttribute('aria-pressed', String(toggleVoice()));
+  if (toggleVoice) toggleVoice();
   else speech.say('Voice commands are not supported in this browser.', 'high');
 });
 
