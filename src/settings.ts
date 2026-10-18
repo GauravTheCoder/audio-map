@@ -28,6 +28,8 @@ export interface Settings {
   headingUpMap: boolean;
   display: DisplayMode;
   walkRoute: WalkRoute;
+  /** walking routes avoid steps and steep slopes */
+  accessibleRoute: boolean;
   soundProfile: SoundProfile;
   soundTheme: SoundTheme;
   customSound: CustomSound;
@@ -57,6 +59,7 @@ const DEFAULTS: Settings = {
   headingUpMap: true,
   display: 'highContrast',
   walkRoute: 'shortest',
+  accessibleRoute: false,
   soundProfile: 'simple',
   soundTheme: 'classic',
   customSound: { places: 'notable', sideStreets: true, extras: true },

@@ -55,12 +55,14 @@ export async function fetchOnlineRoute(
   signal?: AbortSignal,
   /** walking: keep to streets and their pavements rather than footpaths, alleys and tracks */
   streets = false,
+  /** walking: avoid steps and steep slopes (wheelchair costing) */
+  accessible = false,
 ): Promise<Route | null> {
   const base = BASE[vehicle];
   if (!base) return null;
   const a = proj.toLatLon(from.x, from.y);
   const b = proj.toLatLon(to.x, to.y);
-  const json = vehicle === 'walker' && streets ? await valhallaStreets(a, b, signal) : await osrm(base, vehicle, a, b, from.heading, signal);
+  const json = vehicle === 'walker' && (streets || accessible) ? await valhallaWalk(a, b, streets, accessible, signal) : await osrm(base, vehicle, a, b, from.heading, signal);
   return json && buildRoute(json, vehicle, proj, to, nameNear);
 }
 
@@ -81,18 +83,23 @@ async function osrm(base: string, vehicle: VehicleId, a: LatLon, b: LatLon, head
 }
 
 /**
- * A walking route along streets: Valhalla's pedestrian costing with footpaths ("walkways"),
+ * A walking route on Valhalla, for streets only and/or accessible: pedestrian costing with footpaths ("walkways"),
  * alleys, driveways and tracks made costly, so they are used only when there is no sensible
  * street. Answers in OSRM's format, so the same reading applies.
  */
-async function valhallaStreets(a: LatLon, b: LatLon, signal?: AbortSignal): Promise<OsrmResponse | null> {
+export async function valhallaWalk(a: LatLon, b: LatLon, streets: boolean, accessible: boolean, signal?: AbortSignal): Promise<OsrmResponse | null> {
   const body = {
     locations: [
       { lat: a.lat, lon: a.lon },
       { lat: b.lat, lon: b.lon },
     ],
     costing: 'pedestrian',
-    costing_options: { pedestrian: { walkway_factor: 6, sidewalk_factor: 1, alley_factor: 4, driveway_factor: 5, use_tracks: 0 } },
+    costing_options: {
+      pedestrian: {
+        ...(streets ? { walkway_factor: 6, sidewalk_factor: 1, alley_factor: 4, driveway_factor: 5, use_tracks: 0 } : {}),
+        ...(accessible ? { type: 'wheelchair' } : {}),
+      },
+    },
     format: 'osrm',
     shape_format: 'geojson',
     directions_options: { units: 'kilometers' },

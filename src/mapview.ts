@@ -6,6 +6,8 @@ import type { Feature, FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import type { LatLon } from './geo';
 import { applyHighContrast } from './highcontrast';
+import type { Favorite } from './favorites';
+import type { Note } from './notes';
 
 const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 
@@ -102,6 +104,21 @@ export class MapView {
         'circle-stroke-width': hc ? 4 : 2,
       },
     });
+    // the map is aria-hidden, so these names are for sighted users only
+    m.addLayer({
+      id: 'saved-label',
+      type: 'symbol',
+      source: 'saved',
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': hc ? 16 : 12,
+        'text-anchor': 'top',
+        'text-offset': [0, hc ? 1.1 : 0.9],
+        'text-optional': true,
+      },
+      paint: { 'text-color': hc ? '#fff' : '#000', 'text-halo-color': hc ? '#000' : '#fff', 'text-halo-width': hc ? 3 : 2 },
+    });
     m.addSource('cone', { type: 'geojson', data: points([]) });
     m.addLayer({
       id: 'cone',
@@ -140,10 +157,10 @@ export class MapView {
   }
 
   /** Saved places (red) and spot notes (green; yellow in high contrast). */
-  setSaved(places: LatLon[], notes: LatLon[]) {
-    const f = (list: LatLon[], kind: string) =>
-      list.map((p) => ({ type: 'Feature' as const, properties: { kind }, geometry: { type: 'Point' as const, coordinates: [p.lon, p.lat] } }));
-    this.saved = { type: 'FeatureCollection', features: [...f(places, 'place'), ...f(notes, 'note')] };
+  setSaved(places: Favorite[], notes: Note[]) {
+    const f = (list: LatLon[], kind: string, text: (p: any) => string) =>
+      list.map((p) => ({ type: 'Feature' as const, properties: { kind, label: truncate(text(p)) }, geometry: { type: 'Point' as const, coordinates: [p.lon, p.lat] } }));
+    this.saved = { type: 'FeatureCollection', features: [...f(places, 'place', (p: Favorite) => p.name), ...f(notes, 'note', (p: Note) => p.text)] };
     if (this.ready) (this.map.getSource('saved') as GeoJSONSource).setData(this.saved);
   }
 
@@ -172,6 +189,10 @@ export class MapView {
       zoom: this.map.getZoom() + (zoom - this.map.getZoom()) * 0.05,
     });
   }
+}
+
+function truncate(s: string, max = 24): string {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
 function line(coords: [number, number][]): Feature {

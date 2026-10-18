@@ -31,6 +31,17 @@ export interface RawPlaces {
   signals: Set<number>;
   /** spots to warn about on foot: pedestrian crossings and level crossings */
   crossings?: { lat: number; lon: number; text: string; extras?: string[] }[];
+  /** entrances, platforms and lifts, for finding your way in stations and buildings */
+  access?: { lat: number; lon: number; kind: AccessKind; name?: string }[];
+}
+
+export type AccessKind = 'entrance' | 'platform' | 'lift';
+
+export function accessKind(t: Record<string, string>): AccessKind | null {
+  if (t.entrance || t.railway === 'subway_entrance') return 'entrance';
+  if (t.public_transport === 'platform' || t.railway === 'platform') return 'platform';
+  if (t.highway === 'elevator' || t.elevator === 'yes') return 'lift';
+  return null;
 }
 
 export type RetryNotice = (attempt: number) => void;
@@ -134,6 +145,12 @@ out qt;
   node["highway"="traffic_signals"];
   node["highway"="crossing"];
   node["railway"="level_crossing"];
+  nwr["entrance"];
+  node["railway"="subway_entrance"];
+  nwr["public_transport"="platform"];
+  nwr["railway"="platform"];
+  node["highway"="elevator"];
+  node["elevator"="yes"];
 );
 out center tags qt;`;
   return parsePlaces(await overpass(q, signal, onRetry));
@@ -156,6 +173,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
   const places: RawPlace[] = [];
   const signals = new Set<number>();
   const crossings: NonNullable<RawPlaces['crossings']> = [];
+  const access: NonNullable<RawPlaces['access']> = [];
   // door node id -> places whose outline it is on
   const doorOf = new Map<number, RawPlace[]>();
   const doors: OverpassEl[] = [];
@@ -165,6 +183,8 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat === undefined || lon === undefined) continue;
+    const kind = accessKind(t);
+    if (kind) access.push({ lat, lon, kind, name: t.name ?? t.ref });
     if (t.entrance && el.type === 'node' && !t.amenity && !t.shop && !t.railway && !t.highway) {
       doors.push(el);
       continue;
@@ -199,7 +219,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     if (SKIP_DOOR.test(d.tags!.entrance)) continue;
     for (const p of doorOf.get(d.id) ?? []) (p.entrances ??= []).push({ lat: d.lat!, lon: d.lon!, tags: d.tags! });
   }
-  return { places, signals, crossings };
+  return { places, signals, crossings, access };
 }
 
 /** A bus or tram line calling at a stop, e.g. { ref: '5E', to: 'Lincoln Square' }. */
