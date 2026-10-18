@@ -11,7 +11,7 @@ import { addFavorite } from './favorites';
 import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
-import { THEME_TEXT, type SoundTheme } from './audio/themes';
+import type { SoundTheme } from './audio/themes';
 import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
 import { Speech } from './speech';
 import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
@@ -2147,7 +2147,7 @@ export class Game {
     this.audio.setTheme(this.settings.soundTheme);
     saveSettings(this.settings);
     this.audio.loaded();
-    this.speech.say(THEME_TEXT[this.settings.soundTheme], 'high');
+    this.speech.say(`Sound theme switched to ${theme}.`, 'high');
   }
 
   private help() {

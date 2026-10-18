@@ -39,10 +39,3 @@ export const THEMES: Record<SoundTheme, Record<Cue, CueTune>> = {
     deadEnd: { level: 1.2, pitch: 0.6, wave: 'square' },
   },
 };
-
-
-export const THEME_TEXT: Record<SoundTheme, string> = {
-  classic: 'Classic sounds.',
-  soft: 'Soft sounds: gentler and quieter.',
-  distinct: 'Distinct sounds: each cue has its own timbre and pitch.',
-};

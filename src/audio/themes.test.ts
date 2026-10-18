@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CUES, SOUND_THEMES, THEME_TEXT, THEMES } from './themes';
+import { CUES, SOUND_THEMES, THEMES } from './themes';
 
 describe('sound themes', () => {
   it('define every cue with sane numbers', () => {
@@ -11,7 +11,6 @@ describe('sound themes', () => {
         expect(THEMES[t][c].pitch).toBeGreaterThan(0.4);
         expect(THEMES[t][c].pitch).toBeLessThan(2);
       }
-      expect(THEME_TEXT[t]).toBeTruthy();
     }
   });
   it('keeps classic unchanged', () => {
