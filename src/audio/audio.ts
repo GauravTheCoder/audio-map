@@ -636,7 +636,7 @@ class CarVoice implements VehicleVoice {
       this.gear = gear;
       // brief dip in the engine on a gear change
       this.gain.gain.cancelScheduledValues(t);
-      this.gain.gain.setValueAtTime(0.03, t);
+      this.gain.gain.setTargetAtTime(0.03, t, 0.01); // not a jump, which would click
     }
     const lo = G[gear - 1];
     const hi = G[gear];
