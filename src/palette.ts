@@ -1,5 +1,7 @@
 // Command palette (Control Shift P): every key command reachable by searching its name.
 
+import { bindingsOf, describeBinding, type ActionId, type KeyOverrides } from './keymap';
+
 export interface Action {
   name: string;
   /** spoken/shown key, e.g. "Shift P" */
@@ -7,79 +9,93 @@ export interface Action {
   key: string;
   shift?: boolean;
   ctrl?: boolean;
+  /** set for actions whose key the player can change */
+  id?: ActionId;
 }
 
-const a = (name: string, label: string, key: string, shift = false, ctrl = false): Action => ({ name, label, key, shift, ctrl });
+const f = (name: string, label: string, key: string, shift = false, ctrl = false): Action => ({ name, label, key, shift, ctrl });
+const a = (name: string, id: ActionId): Action => ({ ...f(name, '', ''), id });
+
+export const REBIND_NAME = 'Change key bindings';
+
+/** Fills in each changeable action's current key. */
+const withKeys = (x: Action, o: KeyOverrides): Action => {
+  if (!x.id) return x;
+  const b = bindingsOf(x.id, o)[0];
+  return { ...x, key: b.key, shift: !!b.shift, ctrl: !!b.ctrl, label: describeBinding(b) };
+};
 
 export const ACTIONS: Action[] = [
-  a('Align with the road', 'R', 'r'),
-  a('Heading', 'H', 'h'),
-  a('Headphone check', 'Shift H', 'H', true),
-  a('Speed', 'S', 's'),
-  a('Location', 'L', 'l'),
-  a('Toggle live GPS and compass', 'Shift L', 'L', true),
-  a('Next intersection', 'N', 'n'),
-  a('Last intersection behind you', 'Shift N', 'N', true),
-  a('Step forward through intersections', 'Period', '.'),
-  a('Step back through intersections', 'Comma', ','),
-  a('Toggle intersection proximity beeps', 'Shift B', 'B', true),
-  a("What's around", 'W', 'w'),
-  a('Weather and daylight', 'Shift W', 'W', true),
-  a('Sonar sweep', 'Space', ' '),
-  a('Toggle grid mode', 'F3', 'F3'),
-  a('Jump to a place', 'Control J', 'j', false, true),
-  a('Save route', 'Shift Q', 'Q', true),
-  a('Saved routes', 'Q', 'q'),
-  a('Search for a destination', 'Control D', 'd', false, true),
-  a('Distance to go', 'D', 'd'),
-  a('Toggle turn-by-turn directions', 'T', 't'),
-  a('Next instruction', 'I', 'i'),
-  a('Toggle destination beacon', 'B', 'b'),
-  a('Next nearby place', 'Tab', 'Tab'),
-  a('Previous nearby place', 'Shift Tab', 'Tab', true),
-  a('Set browsed place as destination', 'Enter', 'Enter'),
-  a('Destination distance and direction', 'G', 'g'),
-  a('Clear destination', 'Backspace', 'Backspace'),
-  a('Filter kind of place', 'C', 'c'),
-  a('Leave a spoken note', 'V', 'v'),
-  a('Delete note here', 'Shift V', 'V', true),
-  a('Copy share link', 'Z', 'z'),
-  a('Trip summary', 'U', 'u'),
-  a('Where am I', 'E', 'e'),
-  a('Preview route', 'O', 'o'),
-  a('Next bus stop or station', 'X', 'x'),
-  a('Nearest entrances, platforms and lifts', 'Shift X', 'X', true),
-  a('Next departures at a stop', 'Shift T', 'T', true),
-  a('Save this place', 'Y', 'y'),
-  a('Walker', '1', '1'),
-  a('Bicycle', '2', '2'),
-  a('Car', '3', '3'),
-  a('Helicopter', '4', '4'),
-  a('Toggle road assist', 'A', 'a'),
-  a('Toggle accessible walking routes', 'Shift A', 'A', true),
-  a('Toggle place announcements', 'P', 'p'),
-  a('Switch sound profile', 'Shift P', 'P', true),
-  a('Toggle map rotation', 'M', 'm'),
-  a('Previous spoken message', 'Left bracket', '['),
-  a('Next spoken message', 'Right bracket', ']'),
-  a('Stop speech', 'Control', 'Control'),
-  a('Volume up', 'Page Up', 'PageUp'),
-  a('Volume down', 'Page Down', 'PageDown'),
-  a('Search for a new location', 'F', 'f'),
-  a('Open settings', 'Control comma', ',', false, true),
-  a('Learn the keys', 'Shift F1', 'F1', true),
-  a('Spoken help', 'F1', 'F1'),
-  a('Menu', 'Escape', 'Escape'),
+  a('Align with the road', 'align'),
+  a('Heading', 'heading'),
+  a('Headphone check', 'calibrate'),
+  a('Speed', 'speed'),
+  a('Location', 'location'),
+  a('Toggle live GPS and compass', 'toggleLive'),
+  a('Next intersection', 'nextIntersection'),
+  a('Last intersection behind you', 'prevIntersection'),
+  a('Step forward through intersections', 'stepForward'),
+  a('Step back through intersections', 'stepBack'),
+  a('Toggle intersection proximity beeps', 'proximityBeeps'),
+  a("What's around", 'whatsAround'),
+  a('Weather and daylight', 'conditions'),
+  a('Sonar sweep', 'sonar'),
+  a('Toggle grid mode', 'toggleGrid'),
+  a('Jump to a place', 'jump'),
+  a('Save route', 'saveRoute'),
+  a('Saved routes', 'routes'),
+  a('Search for a destination', 'navigate'),
+  a('Distance to go', 'distance'),
+  a('Toggle turn-by-turn directions', 'turnByTurn'),
+  a('Next instruction', 'instructions'),
+  a('Toggle destination beacon', 'beacon'),
+  a('Next nearby place', 'nextPlace'),
+  a('Previous nearby place', 'prevPlace'),
+  a('Set browsed place as destination', 'setDestination'),
+  a('Destination distance and direction', 'destinationInfo'),
+  a('Clear destination', 'clearDestination'),
+  a('Filter kind of place', 'filter'),
+  a('Leave a spoken note', 'note'),
+  a('Delete note here', 'deleteNote'),
+  a('Report a map error to OpenStreetMap', 'osmNote'),
+  a('Copy share link', 'share'),
+  a('Trip summary', 'tripSummary'),
+  a('Where am I', 'whereAmI'),
+  a('Preview route', 'preview'),
+  a('Next bus stop or station', 'transit'),
+  a('Nearest entrances, platforms and lifts', 'nearestAccess'),
+  a('Next departures at a stop', 'departures'),
+  a('Save this place', 'saveFavorite'),
+  a('Walker', 'walker'),
+  a('Bicycle', 'bicycle'),
+  a('Car', 'car'),
+  a('Helicopter', 'helicopter'),
+  a('Toggle road assist', 'roadAssist'),
+  a('Toggle accessible walking routes', 'accessibleRoute'),
+  a('Toggle place announcements', 'announcePlaces'),
+  a('Switch sound profile', 'soundProfile'),
+  a('Toggle map rotation', 'mapRotation'),
+  a('Previous spoken message', 'reviewBack'),
+  a('Next spoken message', 'reviewNext'),
+  a('Stop speech', 'stopSpeech'),
+  a('Volume up', 'volumeUp'),
+  a('Volume down', 'volumeDown'),
+  a('Search for a new location', 'search'),
+  a('Open settings', 'settings'),
+  f('Learn the keys', 'Shift F1', 'F1', true),
+  f('Spoken help', 'F1', 'F1'),
+  f('Menu', 'Escape', 'Escape'),
+  f(REBIND_NAME, 'opens a dialog', ''),
 ];
 
 /** Case-insensitive; every typed word must appear in the name. */
-export function filterActions(q: string): Action[] {
+export function filterActions(q: string, o: KeyOverrides = {}): Action[] {
   const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-  return ACTIONS.filter((x) => words.every((w) => x.name.toLowerCase().includes(w)));
+  return ACTIONS.map((x) => withKeys(x, o)).filter((x) => words.every((w) => x.name.toLowerCase().includes(w)));
 }
 
 /** Wires the dialog and returns the opener. `run` is called after the dialog has closed. */
-export function setupPalette(canOpen: () => boolean, onClose: () => void, run: (x: Action) => void) {
+export function setupPalette(getKeys: () => KeyOverrides, canOpen: () => boolean, onClose: () => void, run: (x: Action) => void) {
   const dlg = document.getElementById('palette') as HTMLDialogElement;
   const q = document.getElementById('palette-q') as HTMLInputElement;
   const list = document.getElementById('palette-list') as HTMLUListElement;
@@ -98,7 +114,7 @@ export function setupPalette(canOpen: () => boolean, onClose: () => void, run: (
     run(x);
   };
   const render = () => {
-    shown = filterActions(q.value);
+    shown = filterActions(q.value, getKeys());
     active = 0;
     list.replaceChildren(
       ...shown.map((x, i) => {

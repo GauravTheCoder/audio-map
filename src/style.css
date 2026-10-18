@@ -122,6 +122,7 @@ body {
 #stage {
   position: fixed;
   inset: 0;
+  touch-action: none;
 }
 
 #stage:focus {
@@ -269,6 +270,26 @@ h3 {
 .inline input {
   flex: 1;
 }
+.inline input[type='text'] {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 0;
+}
+/* Browser default placeholders are a faint grey; Firefox also dims them with opacity. */
+.inline input[type='text']::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+:root[data-display='high-contrast'] .inline input[type='text'] {
+  border-width: 2px;
+}
+:root[data-display='high-contrast'] .inline input[type='text']::placeholder {
+  color: #ffffff;
+}
 
 .results {
   list-style: none;
@@ -382,12 +403,14 @@ dialog#nav label {
   margin-left: 1.5rem;
 }
 
-#palette-list li {
+#palette-list li,
+#rebind-list li {
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
 }
-#palette-list li[aria-selected='true'] {
+#palette-list li[aria-selected='true'],
+#rebind-list li[aria-selected='true'] {
   outline: 3px solid currentColor;
 }

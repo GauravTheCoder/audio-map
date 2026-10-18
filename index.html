@@ -150,6 +150,7 @@
           <button type="button" id="start-btn" class="primary">Start</button>
           <button type="button" id="resume-btn" hidden>Resume</button>
           <button type="button" id="learn-btn">Learn the keys</button>
+          <button type="button" id="voice-btn" aria-pressed="false">Voice commands</button>
           <button type="button" id="saved-btn">Saved places and notes</button>
         </div>
 
@@ -206,6 +207,7 @@
               <tr><td>Backspace</td><td>Clear destination</td></tr>
               <tr><td>C</td><td>Show only one kind of place (food, shops, transport, health, culture, parks, services) in W, Space and Tab; press again to cycle, back to all</td></tr>
               <tr><td>V</td><td>Leave a spoken note at this spot; you hear it when you pass again. Shift + V deletes the note you are at</td></tr>
+              <tr><td>Control + V</td><td>Report a wrong or missing road or place to OpenStreetMap, after you confirm. The report is public</td></tr>
               <tr><td>Z</td><td>Copy a link to this spot and your destination, to open on another device</td></tr>
               <tr><td>U</td><td>Trip summary: distance, time and streets so far, or the last trip once you have arrived</td></tr>
               <tr><td>E</td><td>Where am I: street, area, nearest landmark and nearest bus stop or station</td></tr>
@@ -230,6 +232,29 @@
               <tr><td>Escape</td><td>Menu</td></tr>
             </tbody>
           </table>
+        </section>
+
+        <section aria-labelledby="touch-h">
+          <h2 id="touch-h">Touch gestures</h2>
+          <p class="hint">On the map, with a screen reader on, touch the map area and use these. Menus and buttons work as usual.</p>
+          <table class="keys">
+            <caption class="sr-only">Touch gestures and what they do</caption>
+            <thead><tr><th scope="col">Gesture</th><th scope="col">Action</th></tr></thead>
+            <tbody>
+              <tr><td>Swipe up</td><td>Accelerate until you brake</td></tr>
+              <tr><td>Swipe down</td><td>Brake</td></tr>
+              <tr><td>Swipe left / right</td><td>Turn 10 degrees</td></tr>
+              <tr><td>Two-finger swipe left / right</td><td>Turn onto the next road in that direction</td></tr>
+              <tr><td>Tap</td><td>Where am I</td></tr>
+              <tr><td>Long press</td><td>Hear the previous spoken message again</td></tr>
+              <tr><td>Two-finger tap</td><td>Menu (pauses)</td></tr>
+            </tbody>
+          </table>
+          <p class="hint">
+            Voice commands (F4, or the button in the menu; needs a browser with speech recognition): say where am I, what is
+            around, speed, heading, location, next intersection, next instruction, distance, repeat, faster, stop, turn left,
+            turn right, next road left, next road right, help, menu or pause.
+          </p>
         </section>
 
         <section aria-labelledby="sounds-h">
@@ -282,6 +307,17 @@
       </form>
     </dialog>
 
+    <dialog id="rebind" aria-labelledby="rebind-title">
+      <form method="dialog" id="rebind-form">
+        <h2 id="rebind-title">Change key bindings</h2>
+        <label for="rebind-q">Search actions. Up and Down choose, Enter asks for a new key, Escape closes.</label>
+        <input id="rebind-q" type="search" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="rebind-list" aria-autocomplete="list" />
+        <div id="rebind-capture" tabindex="-1" role="application" aria-label="Press the new key"></div>
+        <ul id="rebind-list" class="results" role="listbox" aria-label="Actions"></ul>
+        <button type="button" id="rebind-reset">Reset all keys to defaults</button>
+      </form>
+    </dialog>
+
     <dialog id="saved" aria-labelledby="saved-title">
       <form method="dialog" id="saved-form">
         <h2 id="saved-title">Saved places and notes</h2>
@@ -303,6 +339,28 @@
         <div class="inline">
           <input id="note-text" type="text" autocomplete="off" placeholder="e.g. steep kerb, door on the left" />
           <button type="submit" id="note-save">Save note</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="osmnote" aria-labelledby="osmnote-title">
+      <form method="dialog" id="osmnote-form">
+        <h2 id="osmnote-title">Report a map error to OpenStreetMap</h2>
+        <div id="osmnote-edit">
+          <p class="hint">Describe the wrong or missing road or place at this spot. Escape to cancel.</p>
+          <label for="osmnote-text">What is wrong?</label>
+          <div class="inline">
+            <input id="osmnote-text" type="text" autocomplete="off" placeholder="e.g. footpath missing here" />
+            <button type="submit" id="osmnote-review">Review</button>
+          </div>
+        </div>
+        <div id="osmnote-confirm" hidden>
+          <p id="osmnote-summary" tabindex="-1"></p>
+          <p class="hint">OpenStreetMap notes are public and anyone can read them. Your name is not sent.</p>
+          <div class="inline">
+            <button type="submit" id="osmnote-send">Send publicly</button>
+            <button type="button" id="osmnote-back">Back</button>
+          </div>
         </div>
       </form>
     </dialog>

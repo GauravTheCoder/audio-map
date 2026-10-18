@@ -1,3 +1,4 @@
+import type { KeyOverrides } from './keymap';
 import type { CustomSound, SoundProfile } from './profiles';
 import type { PlaceGroup } from './world';
 
@@ -35,6 +36,8 @@ export interface Settings {
   volume: number;
   /** place groups silenced while moving; on-demand lookups ignore this */
   mutedGroups: PlaceGroup[];
+  /** keys the player moved away from the defaults, by action */
+  keyBindings: KeyOverrides;
 }
 
 const DEFAULTS: Settings = {
@@ -60,6 +63,7 @@ const DEFAULTS: Settings = {
   vehicleProfiles: {},
   volume: 0.8,
   mutedGroups: [],
+  keyBindings: {},
 };
 
 const KEY = 'audio-map-settings';
@@ -72,12 +76,13 @@ export function loadSettings(): Settings {
       // earlier names: 'default' (never chosen, just the old default) and 'lowVision'
       if (s.display !== 'standard') s.display = 'highContrast';
       if (!Array.isArray(s.mutedGroups)) s.mutedGroups = [];
+      if (typeof s.keyBindings !== 'object' || !s.keyBindings) s.keyBindings = {};
       return s;
     }
   } catch {
     // storage unavailable: fall through to defaults
   }
-  return { ...DEFAULTS, mutedGroups: [] };
+  return { ...DEFAULTS, mutedGroups: [], keyBindings: {} };
 }
 
 
