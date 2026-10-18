@@ -214,7 +214,7 @@ describe('destination', () => {
     expect(said.at(-1)).toMatch(/No destination/);
     g.settings.turnByTurn = false;
     g.setTarget({ name: 'Elm', x: 0, y: 200 });
-    g.lastDPress = 0;
+    g.lastDPress = -Infinity;
     g.clock = 1;
     game.run('d');
     expect(said.at(-1)).toMatch(/^Elm: .* in a straight line, north\.$/);

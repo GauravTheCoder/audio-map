@@ -180,7 +180,7 @@ export class Game {
   private announcedBends = new Map<string, number>();
   private cuedBends = new Set<string>();
   /** N / Shift+N double press */
-  private lastNPress = 0;
+  private lastNPress = -Infinity;
   private lastNShift = false;
   /** the bend the last jump stopped at, so the next jump goes past it */
   private jumpBend = new Set<string>();
@@ -205,8 +205,8 @@ export class Game {
   private offRouteSince = -1;
   private lastRouteCalc = -1e9;
   private nextRouteCheck = 0;
-  private lastIPress = 0;
-  private lastDPress = 0;
+  private lastIPress = -Infinity;
+  private lastDPress = -Infinity;
   /** furthest along the route we have been, to notice going back along it */
   private furthestProg = 0;
   private lastWrongWay = -1e9;
@@ -1663,7 +1663,7 @@ export class Game {
   private instructions() {
     const now = performance.now();
     const double = now - this.lastIPress < 400;
-    this.lastIPress = double ? 0 : now; // a third quick press starts over
+    this.lastIPress = double ? -Infinity : now; // a third quick press starts over
     if (!this.dest) return this.speech.say('No destination. Press Control D to choose one.', 'high');
     const r = this.route;
     if (!r) {
@@ -1949,7 +1949,7 @@ export class Game {
         // pressed twice quickly: move there
         const now = performance.now();
         const double = now - this.lastNPress < 400 && this.lastNShift === c.shift;
-        this.lastNPress = double ? 0 : now; // a third quick press starts over
+        this.lastNPress = double ? -Infinity : now; // a third quick press starts over
         this.lastNShift = c.shift;
         if (double) return this.jump(c.shift ? -1 : 1);
         return c.shift ? this.previousIntersection() : this.nextIntersection();
@@ -2022,7 +2022,7 @@ export class Game {
         // pressed twice quickly: switch walking routes between shortest and streets only
         const now = performance.now();
         const double = now - this.lastDPress < 400;
-        this.lastDPress = double ? 0 : now;
+        this.lastDPress = double ? -Infinity : now;
         return double ? this.toggleWalkRoute() : this.distanceToGo();
       }
       case 'm':
