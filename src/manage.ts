@@ -26,6 +26,7 @@ export function initManage(d: Deps) {
 
   function row(list: HTMLElement, label: string, value: string, onSave: (v: string) => void, onDelete: () => void, onGo?: () => void) {
     const li = document.createElement('li');
+    const at = { list, i: list.children.length };
     const input = document.createElement('input');
     input.type = 'text';
     input.value = value;
@@ -46,7 +47,7 @@ export function initManage(d: Deps) {
       }
       onSave(v);
       status.textContent = 'Saved.';
-      render();
+      render(at);
     };
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -60,7 +61,7 @@ export function initManage(d: Deps) {
     list.appendChild(li);
   }
 
-  function render() {
+  function render(focus?: { list: HTMLElement; i: number }) {
     const places = $('saved-places');
     const notes = $('saved-notes');
     places.replaceChildren();
@@ -97,7 +98,7 @@ export function initManage(d: Deps) {
     if (!favs.length) places.innerHTML = '<li>No saved places. Press Y in the explorer to save one.</li>';
     if (!ns.length) notes.innerHTML = '<li>No notes. Press V in the explorer to leave one.</li>';
     // rebuilding the rows drops the focused control, which would send keyboard users back to the top of the page
-    if (dlg.open && !dlg.contains(document.activeElement)) (places.querySelector<HTMLElement>('input') ?? $('saved-close')).focus();
+    if (dlg.open && !dlg.contains(document.activeElement)) (focus?.list.children[focus.i]?.querySelector<HTMLElement>('input') ?? places.querySelector<HTMLElement>('input') ?? $('saved-close')).focus();
   }
 
   $('saved-btn').addEventListener('click', () => {
