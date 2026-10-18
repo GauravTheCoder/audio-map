@@ -1,6 +1,7 @@
 import type { KeyOverrides } from './keymap';
 import type { CustomSound, SoundProfile } from './profiles';
 import type { PlaceGroup } from './world';
+import { SOUND_THEMES, type SoundTheme } from './audio/themes';
 
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
@@ -30,6 +31,7 @@ export interface Settings {
   /** walking routes avoid steps and steep slopes */
   accessibleRoute: boolean;
   soundProfile: SoundProfile;
+  soundTheme: SoundTheme;
   customSound: CustomSound;
   /** the profile last chosen while using each vehicle */
   vehicleProfiles: Partial<Record<VehicleId, SoundProfile>>;
@@ -59,6 +61,7 @@ const DEFAULTS: Settings = {
   walkRoute: 'shortest',
   accessibleRoute: false,
   soundProfile: 'simple',
+  soundTheme: 'classic',
   customSound: { places: 'notable', sideStreets: true, extras: true },
   vehicleProfiles: {},
   volume: 0.8,
@@ -76,6 +79,7 @@ export function loadSettings(): Settings {
       // earlier names: 'default' (never chosen, just the old default) and 'lowVision'
       if (s.display !== 'standard') s.display = 'highContrast';
       if (!Array.isArray(s.mutedGroups)) s.mutedGroups = [];
+      if (!SOUND_THEMES.includes(s.soundTheme)) s.soundTheme = 'classic';
       if (typeof s.keyBindings !== 'object' || !s.keyBindings) s.keyBindings = {};
       return s;
     }

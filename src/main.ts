@@ -64,7 +64,7 @@ let tutorial: Tutorial | null = null;
 // ---------- settings form ----------
 
 function bindSettings() {
-  for (const name of ['vehicle', 'speechMode', 'display', 'walkRoute', 'soundProfile'] as const) {
+  for (const name of ['vehicle', 'speechMode', 'display', 'walkRoute', 'soundProfile', 'soundTheme'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) {
       r.checked = r.value === settings[name];
       r.addEventListener('change', () => {
@@ -124,7 +124,7 @@ function applyDisplay() {
 
 /** settings that can also change by key (vehicle 1–4, walking routes D twice) */
 function syncVehicleRadios() {
-  for (const name of ['vehicle', 'walkRoute', 'soundProfile'] as const) {
+  for (const name of ['vehicle', 'walkRoute', 'soundProfile', 'soundTheme'] as const) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)) r.checked = r.value === settings[name];
   }
 }
@@ -257,7 +257,7 @@ function closeMenu() {
 
 function startGame(learn = false) {
   if (!game) {
-    const audio = new AudioEngine(settings.volume); // created on a user gesture so the browser allows sound
+    const audio = new AudioEngine(settings.volume, settings.soundTheme); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
     game.onMenu = openMenu;
     game.onNavigate = () => openNav('navigate');
@@ -540,7 +540,9 @@ const openPalette = setupPalette(
     game?.focus(stage);
   },
   (x) => {
-    if (x.name === REBIND_NAME) {
+    // the palette has just closed and focus is moving back to the stage; NVDA drops a message spoken in that moment
+    if (x.key.startsWith('theme:')) setTimeout(() => game?.setTheme(x.key.slice(6) as Settings['soundTheme']), 300);
+    else if (x.name === REBIND_NAME) {
       game?.pause();
       openRebind();
     } else game?.run(x.key, x);
