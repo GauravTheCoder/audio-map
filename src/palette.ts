@@ -48,6 +48,7 @@ export const ACTIONS: Action[] = [
   a('Preview route', 'O', 'o'),
   a('Next bus stop or station', 'X', 'x'),
   a('Nearest entrances, platforms and lifts', 'Shift X', 'X', true),
+  a('Next departures at a stop', 'Shift T', 'T', true),
   a('Save this place', 'Y', 'y'),
   a('Walker', '1', '1'),
   a('Bicycle', '2', '2'),
