@@ -27,7 +27,6 @@ import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place
 const STEP = 1 / 60;
 /** seconds off the ring before the roundabout counts as left */
 const RING_EXIT_DELAY = 0.5;
-/** distances (m) at which progress toward the destination is spoken */
 export function minutesText(minutes: number): string {
   const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
   const h = Math.floor(minutes / 60);
@@ -46,6 +45,7 @@ const FILTER_NAMES: Record<PlaceGroup, string> = {
   other: 'other places',
 };
 const FILTERS: (PlaceGroup | null)[] = [null, 'food', 'shop', 'transport', 'health', 'culture', 'nature', 'service'];
+/** distances (m) at which progress toward the destination is spoken */
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
 /** grid mode step sizes, in metres (yards with imperial units) */
 const GRID_STEPS = [1, 10, 100, 1000];
