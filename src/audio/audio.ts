@@ -651,11 +651,7 @@ class CarVoice implements VehicleVoice {
     this.rough.gain.gain.setTargetAtTime(s.surface !== 'paved' && s.speed > 0.5 ? 0.15 + Math.min(0.2, s.speed / 40) : 0, t, 0.1);
   }
   dispose() {
-    this.o1.stop();
-    this.o2.stop();
-    this.rough.src.stop();
-    this.gain.disconnect();
-    this.rough.gain.disconnect();
+    fadeOut(this.a, [this.gain, this.rough.gain], [this.o1, this.o2, this.rough.src]);
   }
 }
 
@@ -703,11 +699,19 @@ class HelicopterVoice implements VehicleVoice {
     this.whine.frequency.setTargetAtTime(1400 + r * 300, t, 0.3);
   }
   dispose() {
-    this.src.stop();
-    this.lfo.stop();
-    this.whine.stop();
-    this.nodes.forEach((n) => n.disconnect());
+    fadeOut(this.a, this.nodes as GainNode[], [this.src, this.lfo, this.whine]);
   }
+}
+
+/** Silences a voice over a few milliseconds before stopping its sources, so switching vehicle does not click. */
+function fadeOut(a: AudioEngine, gains: GainNode[], sources: AudioScheduledSourceNode[]) {
+  const t = a.now;
+  for (const g of gains) {
+    g.gain.cancelScheduledValues(t);
+    g.gain.setTargetAtTime(0, t, 0.01);
+  }
+  for (const s of sources) s.stop(t + 0.06);
+  sources[0].onended = () => gains.forEach((g) => g.disconnect());
 }
 
 function makeNoise(ctx: AudioContext): AudioBuffer {
