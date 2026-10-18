@@ -831,6 +831,46 @@ describe('grid mode turn by turn', () => {
     expect(said.at(-1)).toMatch(/^Oak Street and Elm Street\./);
   });
 
+  it('N looks the way the last arrow went, Shift N the other way', async () => {
+    const { game, said, g } = await routed();
+    // Oak Street (x = 0) crossed by Pine Street (y = -150) and Elm Street (y = 200); Ash Street at x = 300
+    const pts: [number, number, number][] = [
+      [1, 0, -300], [2, 0, -150], [3, 0, 200], [4, 0, 400],
+      [5, -200, 200], [6, 300, 200], [7, -200, -150], [8, 300, -150], [9, 300, -300], [10, 300, 400],
+    ];
+    g.world = new World(proj, {
+      nodes: new Map(pts.map(([id, x, y]) => [id, ll(x, y)])),
+      ways: [
+        { id: 1, nodes: [1, 2, 3, 4], tags: { highway: 'residential', name: 'Oak Street' } },
+        { id: 2, nodes: [5, 3, 6], tags: { highway: 'residential', name: 'Elm Street' } },
+        { id: 3, nodes: [7, 2, 8], tags: { highway: 'residential', name: 'Pine Street' } },
+        { id: 4, nodes: [9, 8, 6, 10], tags: { highway: 'residential', name: 'Ash Street' } },
+      ],
+    });
+    g.x = 0;
+    g.y = 50;
+    game.run('n'); // no arrow yet: nearest of all
+    expect(said.at(-1)).toBe('Oak Street and Elm Street, 150 metres north. Press N twice to step onto it.');
+    game.run('ArrowRight');
+    g.lastNPress = -Infinity;
+    game.run('n');
+    expect(said.at(-1)).toBe('East: Elm Street and Ash Street, 150 metres north and 290 metres east. Press N twice to step onto it.');
+    g.lastNPress = -Infinity;
+    game.run('ArrowUp');
+    game.run('n');
+    expect(said.at(-1)).toMatch(/^North: Oak Street and Elm Street, 140 metres north and 10 metres west\./);
+    g.lastNPress = -Infinity;
+    game.run('N', { shift: true });
+    expect(said.at(-1)).toMatch(/^South: Oak Street and Pine Street, 210 metres south and 10 metres west\. Press Shift N twice/);
+    g.lastNPress = -Infinity;
+    g.x = -150;
+    g.y = 300;
+    game.run('ArrowUp'); // nothing to the north from here
+    g.lastNPress = -Infinity;
+    game.run('n');
+    expect(said.at(-1)).toMatch(/^No intersection to the north within 500 metres\. Nearest: Oak Street and Elm Street/);
+  });
+
   it('lists places by compass direction rather than clock', async () => {
     const { game, said } = await routed();
     game.run('w');

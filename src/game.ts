@@ -172,7 +172,7 @@ export class Game {
   private restartingForGps = false;
   /** grid mode: arrows step north, south, west and east and say what kind of ground you are on */
   /** key: the area last spoken; turn: the route turn last pointed to, to notice reaching it */
-  private grid: { key: string | null; req: number; turn?: Maneuver } | null = null;
+  private grid: { key: string | null; req: number; turn?: Maneuver; dir?: number } | null = null;
   private gridStepIdx = 1;
   private areas = new AreaMap();
   /** what to say about each place's exact spot, worked out on first use (reset with the map) */
@@ -2108,7 +2108,7 @@ export class Game {
         const double = now - this.lastNPress < 400 && this.lastNShift === back;
         this.lastNPress = double ? -Infinity : now; // a third quick press starts over
         this.lastNShift = back;
-        if (this.grid) return this.gridIntersection(double);
+        if (this.grid) return this.gridIntersection(double, back);
         if (double) return this.jump(back ? -1 : 1);
         return back ? this.previousIntersection() : this.nextIntersection();
       }
@@ -2937,6 +2937,7 @@ export class Game {
   private gridMove(dx: number, dy: number) {
     const m = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
     if (this.trip) this.trip.meters += m;
+    this.grid!.dir = bearingTo(0, 0, dx, dy); // N looks this way
     this.place(this.x + dx * m, this.y + dy * m, 0, null);
     void this.gridLook(true);
   }
@@ -3019,24 +3020,46 @@ export class Game {
     return this.grid ? compass8(bearingTo(this.x, this.y, x, y)) : `at ${clockDir(relAngle(this.heading, bearingTo(this.x, this.y, x, y)))}`;
   }
 
-  /** N in grid mode: the nearest intersection, how far each way; pressed twice, step onto it. */
-  private gridIntersection(move: boolean) {
+  /**
+   * N in grid mode: the nearest intersection the way the last arrow went (within 45 degrees either
+   * side), Shift N the other way, and how far each way it is. Pressed twice, step onto it. Before any
+   * arrow, or with none that way, the nearest in any direction.
+   */
+  private gridIntersection(move: boolean, back: boolean) {
     const w = this.world!;
-    let best: { n: GNode; d: number } | null = null;
-    for (const n of w.nodesNear(this.x, this.y, 400)) {
+    const g = this.grid!;
+    const want = g.dir === undefined ? undefined : normDeg(g.dir + (back ? 180 : 0));
+    const R = 500;
+    let any: { n: GNode; d: number } | null = null;
+    let ahead: { n: GNode; d: number } | null = null;
+    for (const n of w.nodesNear(this.x, this.y, R)) {
       if (!w.isIntersection(n, this.filter)) continue;
       const d = dist(this.x, this.y, n.x, n.y);
-      if (!best || d < best.d) best = { n, d };
+      if (!any || d < any.d) any = { n, d };
+      // not the one we stand on: the next one that way
+      if (want !== undefined && d > 2 && Math.abs(relAngle(want, bearingTo(this.x, this.y, n.x, n.y))) <= 45 && (!ahead || d < ahead.d)) ahead = { n, d };
     }
-    if (!best) return this.speech.say(`No intersection within ${this.gridDistance(400)}.`, 'high');
-    const names = [...new Set(best.n.edges.filter((e) => e.way.named).map((e) => e.way.name))];
-    const label = names.length ? names.slice(0, 3).join(' and ') : 'Intersection';
+    const way = want === undefined ? '' : compass8(want);
+    const best = want === undefined ? any : ahead;
+    let lead = '';
+    if (!best) {
+      if (!any) return this.speech.say(`No intersection within ${this.gridDistance(R)}.`, 'high');
+      return this.speech.say(`No intersection to the ${way} within ${this.gridDistance(R)}. Nearest: ${this.intersectionLabel(any.n)}, ${this.gridOffset(any.n.x, any.n.y) || 'here'}.`, 'high');
+    }
+    if (way) lead = `${cap(way)}: `;
+    const label = this.intersectionLabel(best.n);
     if (move) {
       this.place(best.n.x, best.n.y, 0, null);
       return void this.gridLook(true, `${label}.`);
     }
     const off = this.gridOffset(best.n.x, best.n.y);
-    this.speech.say(off ? `${label}, ${off}. Press N twice to step onto it.` : `You are at ${label}.`, 'high');
+    this.speech.say(off ? `${lead}${label}, ${off}. Press ${back ? 'Shift N' : 'N'} twice to step onto it.` : `You are at ${label}.`, 'high');
+  }
+
+  /** "Oak Street and Elm Street" */
+  private intersectionLabel(n: GNode): string {
+    const names = [...new Set(n.edges.filter((e) => e.way.named).map((e) => e.way.name))];
+    return names.length ? names.slice(0, 3).join(' and ') : 'Intersection';
   }
 
   /**
