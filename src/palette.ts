@@ -1,4 +1,4 @@
-// Command palette (F2): every key command reachable by searching its name.
+// Command palette (Control Shift P): every key command reachable by searching its name.
 
 export interface Action {
   name: string;
