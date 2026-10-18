@@ -283,7 +283,7 @@ function startGame(learn = false) {
       osmDlg.showModal();
       $('osmnote-text').focus();
     };
-    tutorial = new Tutorial(speech, audio, () => game!.snap);
+    tutorial = new Tutorial(speech, audio, () => game!.snap, () => game!.exitGrid());
     game.onKey = (c) => tutorial!.onKey(c);
     bindRoutes(game, stage);
     game.onHud = (h) => {

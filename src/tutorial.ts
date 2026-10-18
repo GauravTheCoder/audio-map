@@ -55,9 +55,12 @@ export class Tutorial {
     private speech: Speech,
     private audio: AudioEngine,
     private probe: () => Snap,
+    /** called as practice starts, e.g. to leave grid mode, where the arrows step instead of drive */
+    private onBegin?: () => void,
   ) {}
 
   begin() {
+    this.onBegin?.();
     clearTimeout(this.timer);
     this.timer = undefined;
     this.step = 0;

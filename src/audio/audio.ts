@@ -30,6 +30,8 @@ export class AudioEngine {
   private bed: GainNode; // continuous sounds, ducked under speech
   readonly noise: AudioBuffer;
   private voice: VehicleVoice | null = null;
+  private vehicleId: VehicleId | null = null;
+  private engineOn = true;
   private wind: { src: AudioBufferSourceNode; gain: GainNode; filter: BiquadFilterNode };
   private rumble: { gain: GainNode; pan: StereoPannerNode; trem: OscillatorNode; filter: BiquadFilterNode };
   private reverb: ConvolverNode;
@@ -140,8 +142,17 @@ export class AudioEngine {
   }
 
   setVehicle(id: VehicleId) {
+    this.vehicleId = id;
     this.voice?.dispose();
-    this.voice = makeVoice(id, this, this.bed);
+    this.voice = this.engineOn ? makeVoice(id, this, this.bed) : null;
+  }
+
+  /** Off while the vehicle is parked (grid mode): its engine, rotor or footsteps fall silent until switched back on. */
+  setEngine(on: boolean) {
+    if (on === this.engineOn) return;
+    this.engineOn = on;
+    this.voice?.dispose();
+    this.voice = on && this.vehicleId ? makeVoice(this.vehicleId, this, this.bed) : null;
   }
 
   update(s: EngineState, dt: number) {

@@ -585,6 +585,46 @@ describe('grid mode', () => {
     expect(g.grid.key).toBe('park1');
   });
 
+  it('parks the vehicle: its engine sound stops in grid mode and starts again after', () => {
+    const { game, g } = gridSetup();
+    const engine: boolean[] = [];
+    g.audio = new Proxy({}, { get: (_t, p) => (p === 'setEngine' ? (on: boolean) => engine.push(on) : p === 'now' ? 0 : () => {}) });
+    game.run('3'); // car
+    game.run('F3');
+    game.run('F3');
+    expect(engine).toEqual([false, true]);
+  });
+
+  it('stays north-up whatever moves you, and R says so', () => {
+    const { game, said, g } = gridSetup();
+    game.run('F3');
+    g.jump(1); // N twice: along Oak Street to Elm Street
+    expect(g.y).toBeGreaterThan(150);
+    expect(g.heading).toBe(0);
+    game.run('ArrowRight');
+    game.run('r');
+    expect(said.at(-1)).toBe('Grid mode always faces north. F3 leaves it.');
+    expect(g.heading).toBe(0);
+  });
+
+  it('leaving on a road faces along it, the way nearest north', () => {
+    const { game, said, g } = gridSetup();
+    g.heading = 180;
+    game.run('F3');
+    game.run('F3');
+    expect(g.heading).toBe(0);
+    expect(said.at(-1)).toBe('Grid mode off. On Oak Street, facing north.');
+  });
+
+  it('counts grid steps in the trip distance', () => {
+    const { game, g } = gridSetup();
+    game.setTarget({ name: 'Far', x: 2000, y: 2000 });
+    game.run('F3');
+    game.run('=');
+    game.run('ArrowRight');
+    expect(g.trip.meters).toBe(100);
+  });
+
   it('keeps facing north, so the beacon is a compass: east of you stays on the right', () => {
     const { game, g } = gridSetup();
     const rels: number[] = [];

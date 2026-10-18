@@ -310,7 +310,7 @@ export class Game {
     this.dest = null;
     this.trip = null;
     this.browse = null;
-    this.grid = null;
+    this.exitGrid();
     this.details.clear();
     this.announcedNodes.clear();
     this.announcedPlaces.clear();
@@ -624,8 +624,8 @@ export class Game {
         speed: this.speed,
         maxSpeed: this.vehicle.maxSpeed,
         throttle: this.throttle,
-        surface: !this.onRoad && this.vehicle.id !== 'helicopter' ? 'offroad' : this.road?.surface && ROUGH.has(this.road.surface) ? 'rough' : 'paved',
-        tunnel: !!this.road?.tunnel && this.onRoad,
+        surface: this.grid ? 'paved' : !this.onRoad && this.vehicle.id !== 'helicopter' ? 'offroad' : this.road?.surface && ROUGH.has(this.road.surface) ? 'rough' : 'paved',
+        tunnel: !this.grid && !!this.road?.tunnel && this.onRoad,
       },
       dt,
     );
@@ -2163,6 +2163,7 @@ export class Game {
       case 'saveFavorite':
         return this.saveFavorite();
       case 'align':
+        if (this.grid) return this.speech.say('Grid mode always faces north. F3 leaves it.', 'high');
         return this.alignToRoad();
       case 'search':
         this.onMenu?.('search');
@@ -2519,7 +2520,7 @@ export class Game {
     );
     this.live = live;
     const gridOff = !!this.grid;
-    this.grid = null;
+    this.exitGrid();
     this.speech.say(`${gridOff ? 'Grid mode off. ' : ''}Live GPS on. Waiting for your location. The keyboard works until it arrives.`, 'high');
     await live.start();
   }
@@ -2560,7 +2561,7 @@ export class Game {
   private place(x: number, y: number, heading: number, j: Junction | null) {
     this.x = x;
     this.y = y;
-    this.heading = normDeg(Math.round(heading));
+    this.heading = this.grid ? 0 : normDeg(Math.round(heading)); // grid mode stays north-up whatever moved us
     this.speed = 0;
     this.inJunction = j ? new Set(j.nodes.map((n) => n.id)) : null;
     if (j) for (const n of j.nodes) this.announcedNodes.set(n.id, this.clock);
@@ -2877,15 +2878,26 @@ export class Game {
 
   private toggleGrid() {
     if (this.grid) {
-      this.grid = null;
-      this.updateRoad(true);
-      return this.speech.say(`Grid mode off. Facing ${compass8(this.heading)}.`, 'high');
+      this.exitGrid();
+      // on a road, face along it (the way nearest north) rather than across it
+      const hit = this.world!.nearestRoad(this.x, this.y, 30, this.vehicle.canUse);
+      if (hit && hit.hit.dist <= roadHalfWidth(hit.seg.way.type) + 4) this.place(hit.hit.px, hit.hit.py, Math.abs(relAngle(0, hit.dir)) <= 90 ? hit.dir : hit.dir + 180, null);
+      else this.updateRoad(true);
+      const on = this.streetName ? `On ${this.streetName}, facing` : 'Facing';
+      return this.speech.say(`Grid mode off. ${on} ${compass8(this.heading)}.`, 'high');
     }
     if (this.live) return this.speech.say('Live GPS is on. Shift L turns it off first.', 'high');
     // face north and stay so: the beacon and clock directions then read as a north-up map
     this.place(this.x, this.y, 0, null);
     this.grid = { key: null, req: 0 };
+    this.audio.setEngine(false); // the vehicle is parked while you step about
     void this.gridLook(true, `Grid mode, up is north. Arrows move ${this.gridStepText()}; minus and equals change the step. Space says where you are. F3 leaves.`);
+  }
+
+  /** Leave grid mode (if on) and start the vehicle's sound again. */
+  exitGrid() {
+    this.grid = null;
+    this.audio.setEngine(true);
   }
 
   /** Keys that work differently in grid mode; returns false for the rest. */
@@ -2911,6 +2923,7 @@ export class Game {
 
   private gridMove(dx: number, dy: number) {
     const m = GRID_STEPS[this.gridStepIdx] * (this.settings.units === 'imperial' ? 0.9144 : 1);
+    if (this.trip) this.trip.meters += m;
     this.place(this.x + dx * m, this.y + dy * m, 0, null);
     void this.gridLook(true);
   }
