@@ -124,5 +124,8 @@ describe('drivesOnLeft', () => {
   it('knows Britain from Illinois', () => {
     expect(drivesOnLeft(51.5, -0.14)).toBe(true);
     expect(drivesOnLeft(40.11, -88.22)).toBe(false);
+    expect(drivesOnLeft(35.68, 139.7)).toBe(true);
+    expect(drivesOnLeft(51.13, 1.31)).toBe(true);
+    for (const [lat, lon] of [[37.57, 126.98], [50.95, 1.86], [-1.95, 30.06], [43.1, 131.9]]) expect(drivesOnLeft(lat, lon)).toBe(false);
   });
 });

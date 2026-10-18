@@ -205,18 +205,29 @@ export function crossingLeg(world: World, x: number, y: number, units: Units): s
 // Rough boxes around the places that drive on the left, to guess which side of the street a
 // stop serves. Only used when the street is two-way and the stop does not say.
 const LEFT_HAND: [number, number, number, number][] = [
-  [49.8, -11, 61, 2], // Britain and Ireland
-  [24, 122.5, 46, 146], // Japan
+  [49.8, -11, 61, 1.8], // Britain and Ireland
+  [30.2, 129.5, 41.6, 142.2], // Japan: Kyushu to northern Honshu
+  [41.3, 139.3, 45.6, 145.9], // Hokkaido
+  [24, 122.5, 28.5, 131.5], // Okinawa
   [-44, 112, -10, 154], // Australia
   [-48, 166, -34, 179], // New Zealand
   [6, 68, 30.5, 89], // India, Pakistan, Nepal, Bangladesh, Sri Lanka
   [-35, 16, -17, 33], // southern Africa
-  [-12, 29, 5, 42], // Kenya, Uganda, Tanzania
+  [-12, 29, 4.2, 42], // Kenya, Uganda, Tanzania
   [-11, 95, 4.5, 141], // Indonesia, Malaysia, Singapore
   [5.5, 97.5, 20.5, 101.5], // Thailand
   [22.1, 113.8, 22.6, 114.5], // Hong Kong
 ];
 
+// Right-hand places that the boxes above clip
+const RIGHT_HAND: [number, number, number, number][] = [
+  [50, 1.5, 50.99, 2.6], // Calais and Boulogne
+  [-4.5, 28.8, -1, 30.9], // Rwanda and Burundi
+];
+
+const inBox = (lat: number, lon: number, [s, w, n, e]: [number, number, number, number]) => lat >= s && lat <= n && lon >= w && lon <= e;
+
 export function drivesOnLeft(lat: number, lon: number): boolean {
-  return LEFT_HAND.some(([s, w, n, e]) => lat >= s && lat <= n && lon >= w && lon <= e);
+  if (RIGHT_HAND.some((b) => inBox(lat, lon, b))) return false;
+  return LEFT_HAND.some((b) => inBox(lat, lon, b));
 }
