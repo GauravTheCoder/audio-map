@@ -122,7 +122,8 @@ export class AudioEngine {
   }
 
   resume() {
-    if (this.ctx.state !== 'running') void this.ctx.resume();
+    // not guarded by state: a suspend() requested just before can still be pending while state reads 'running'
+    void this.ctx.resume();
   }
 
   setVolume(v: number) {
