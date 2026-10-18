@@ -33,6 +33,23 @@ describe('validate', () => {
   it('imports the announceHazards setting', () => {
     expect(validate({ app: 'audio-map', settings: { announceHazards: false } }).settings).toEqual({ announceHazards: false });
   });
+
+  it('imports custom sound, muted groups and per-vehicle profiles', () => {
+    const settings = {
+      customSound: { places: 'landmarks', sideStreets: false, extras: true },
+      mutedGroups: ['food', 'food', 'bogus', 7],
+      vehicleProfiles: { car: 'minimal', walker: 'nope', plane: 'full' },
+    };
+    expect(validate({ app: 'audio-map', settings }).settings).toEqual({
+      customSound: { places: 'landmarks', sideStreets: false, extras: true },
+      mutedGroups: ['food'],
+      vehicleProfiles: { car: 'minimal' },
+    });
+  });
+
+  it('drops a malformed customSound', () => {
+    expect(validate({ app: 'audio-map', settings: { customSound: { places: 'all', sideStreets: 'yes', extras: true } } }).settings).toEqual({});
+  });
 });
 
 describe('merge', () => {

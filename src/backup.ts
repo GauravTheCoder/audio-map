@@ -33,6 +33,10 @@ const ENUMS: Record<string, readonly string[]> = {
   soundProfile: ['full', 'simple', 'minimal', 'custom'],
 };
 const BOOLS = ['announcePlaces', 'announceHazards', 'announceStreets', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap'];
+const GROUPS = ['food', 'shop', 'transport', 'culture', 'nature', 'health', 'service', 'other'];
+const VEHICLES = ENUMS.vehicle;
+const PROFILES = ENUMS.soundProfile;
+const CUSTOM_PLACES = ['all', 'notable', 'landmarks', 'none'];
 const RANGES: Record<string, [number, number]> = { voiceRate: [0.5, 3], volume: [0, 1] };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -59,6 +63,19 @@ export function validate(raw: unknown): Backup {
   const s = isObj(raw.settings) ? raw.settings : {};
   for (const [k, allowed] of Object.entries(ENUMS)) if (typeof s[k] === 'string' && allowed.includes(s[k])) settings[k] = s[k];
   for (const k of BOOLS) if (typeof s[k] === 'boolean') settings[k] = s[k];
+  if (Array.isArray(s.mutedGroups)) settings.mutedGroups = [...new Set(s.mutedGroups.filter((g): g is string => typeof g === 'string' && GROUPS.includes(g)))];
+  const cs = s.customSound;
+  if (isObj(cs) && typeof cs.places === 'string' && CUSTOM_PLACES.includes(cs.places) && typeof cs.sideStreets === 'boolean' && typeof cs.extras === 'boolean') {
+    settings.customSound = { places: cs.places, sideStreets: cs.sideStreets, extras: cs.extras };
+  }
+  if (isObj(s.vehicleProfiles)) {
+    const vp: Record<string, string> = {};
+    for (const v of VEHICLES) {
+      const p = s.vehicleProfiles[v];
+      if (typeof p === 'string' && PROFILES.includes(p)) vp[v] = p;
+    }
+    settings.vehicleProfiles = vp;
+  }
   for (const [k, [lo, hi]] of Object.entries(RANGES)) {
     const v = s[k];
     if (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi) settings[k] = v;
@@ -98,6 +115,14 @@ function stored(): Backup {
 
 /** Reflects imported settings in the settings form, which otherwise only reads settings at start-up. */
 function syncForm(patch: Record<string, unknown>) {
+  const muted = patch.mutedGroups;
+  if (Array.isArray(muted)) for (const el of document.querySelectorAll<HTMLInputElement>('input[data-group]')) el.checked = !muted.includes(el.dataset.group);
+  const cs = patch.customSound as { places: string; sideStreets: boolean; extras: boolean } | undefined;
+  if (cs) {
+    (document.getElementById('customPlaces') as HTMLSelectElement).value = cs.places;
+    (document.getElementById('customSideStreets') as HTMLInputElement).checked = cs.sideStreets;
+    (document.getElementById('customExtras') as HTMLInputElement).checked = cs.extras;
+  }
   for (const [k, v] of Object.entries(patch)) {
     for (const r of document.querySelectorAll<HTMLInputElement>(`input[name="${k}"]`)) r.checked = r.value === v;
     const el = document.getElementById(k) as HTMLInputElement | HTMLSelectElement | null;
