@@ -1,4 +1,5 @@
 // Touch gestures for phones without a keyboard. They run the same commands as the keys, via Game.run.
+import type { ActionId, Binding } from './keymap';
 
 export type Gesture =
   | 'tap'
@@ -25,10 +26,11 @@ export function classify(dx: number, dy: number, ms: number, fingers: number): G
 }
 
 /** What a command does: press a key, or start accelerating or braking. */
-export type Action = { key: string; shift?: boolean; ctrl?: boolean } | { drive: 'go' | 'brake' };
+export type Action = { key: string; shift?: boolean; ctrl?: boolean } | { action: ActionId } | { drive: 'go' | 'brake' };
 
 export interface Driver {
   run(key: string, mods?: { shift?: boolean; ctrl?: boolean }): void;
+  keyFor(id: ActionId): Binding;
   hold(code: string, on: boolean): void;
 }
 
@@ -36,18 +38,28 @@ const BRAKE_MS = 1500;
 let brakeTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function perform(game: Driver, a: Action) {
+  if ('action' in a) {
+    const b = game.keyFor(a.action);
+    return game.run(b.key, b);
+  }
   if (!('drive' in a)) return game.run(a.key, a);
   clearTimeout(brakeTimer);
-  game.hold('ArrowUp', a.drive === 'go');
-  game.hold('Slash', a.drive === 'brake');
+  // press the new key before releasing the old one, so the switch itself is not announced as a stop
+  if (a.drive === 'go') {
+    game.hold('ArrowUp', true);
+    game.hold('Slash', false);
+  } else {
+    game.hold('Slash', true);
+    game.hold('ArrowUp', false);
+  }
   // a swipe is momentary, so braking lets go by itself instead of needing a second gesture
   if (a.drive === 'brake') brakeTimer = setTimeout(() => game.hold('Slash', false), BRAKE_MS);
 }
 
 export const GESTURES: Record<Gesture, Action> = {
-  tap: { key: 'e' },
-  'two-tap': { key: 'Escape' },
-  'long-press': { key: '[' },
+  tap: { action: 'whereAmI' },
+  'two-tap': { action: 'menu' },
+  'long-press': { action: 'reviewBack' },
   'swipe-up': { drive: 'go' },
   'swipe-down': { drive: 'brake' },
   'swipe-left': { key: 'ArrowLeft', shift: true },

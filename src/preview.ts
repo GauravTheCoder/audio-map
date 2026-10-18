@@ -49,6 +49,11 @@ function play(btn: HTMLButtonElement, profile: SoundProfile, settings: Settings,
   at(13000, () => stop(speech));
 }
 
+/** Ends a running preview, e.g. when the game starts; does nothing otherwise, so speech is not cut. */
+export function stopPreview(speech: Speech) {
+  if (audio) stop(speech);
+}
+
 export function initPreview(getSettings: () => Settings, speech: Speech) {
   for (const btn of document.querySelectorAll<HTMLButtonElement>('button.preview')) {
     btn.addEventListener('click', () => {

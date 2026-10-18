@@ -91,3 +91,12 @@ describe('tutorial checks', () => {
     expect(said.at(-1)).toBe('Tutorial finished. Back to normal play.');
   });
 });
+
+describe('tutorial restart', () => {
+  it('drops a check that was pending when it restarts', () => {
+    press('ArrowUp');
+    t.begin();
+    wait(3000);
+    expect(said.join(' ')).not.toContain('You are not moving yet');
+  });
+});

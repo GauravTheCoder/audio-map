@@ -65,7 +65,7 @@ function recognitionCtor(): (new () => Recognition) | undefined {
 }
 
 /** Returns a toggle, or null when the browser has no speech recognition. */
-export function setupVoice(getGame: () => Driver | null, say: (s: string) => void): (() => boolean) | null {
+export function setupVoice(getGame: () => Driver | null, say: (s: string) => void, onChange: (on: boolean) => void): (() => boolean) | null {
   const Ctor = recognitionCtor();
   if (!Ctor) return null;
   const rec = new Ctor();
@@ -74,12 +74,16 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
   rec.lang = navigator.language || 'en-US';
   let on = false;
   rec.onresult = (e) => {
-    const r = e.results[e.resultIndex];
     const game = getGame();
-    if (!r.isFinal || !game) return;
-    const a = matchPhrase(r[0].transcript);
-    if (a) perform(game, a);
-    else say(`Did not understand ${r[0].transcript.trim()}.`);
+    if (!game) return;
+    // one event can carry several results; each final one is a command
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (!r.isFinal) continue;
+      const a = matchPhrase(r[0].transcript);
+      if (a) perform(game, a);
+      else say(`Did not understand ${r[0].transcript.trim()}.`);
+    }
   };
   // browsers end recognition after silence; restart while the user wants it on
   rec.onend = () => {
@@ -88,11 +92,13 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
       rec.start();
     } catch {
       on = false;
+      onChange(false);
     }
   };
   rec.onerror = (e) => {
     if (e.error === 'no-speech' || e.error === 'aborted') return;
     on = false;
+    onChange(false);
     // Brave and some other browsers expose the API but block the speech service behind it ('network')
     const brave = 'brave' in navigator;
     say(
@@ -105,8 +111,13 @@ export function setupVoice(getGame: () => Driver | null, say: (s: string) => voi
   };
   return () => {
     on = !on;
-    if (on) rec.start();
-    else rec.stop();
+    try {
+      if (on) rec.start();
+      else rec.stop();
+    } catch {
+      // still stopping from the last toggle; onend restarts it while `on` is set
+    }
+    onChange(on);
     say(`Voice commands ${on ? 'on' : 'off'}.`);
     return on;
   };

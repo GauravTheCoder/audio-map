@@ -57,8 +57,11 @@ export function pickHeading(compass: number | null, course: number | null, speed
  * The estimate's own uncertainty grows with the time since the last fix and the speed we may have covered.
  */
 export function fuse(prev: Estimate | null, x: number, y: number, acc: number, t: number, speed: number): Estimate {
+  // a NaN position, speed or a zero accuracy would poison every later estimate
+  if (!Number.isFinite(x + y)) return prev ?? { x: 0, y: 0, acc: 1000, t };
+  acc = Math.max(acc, 1);
   if (!prev) return { x, y, acc, t };
-  const reach = Math.max(speed, 1) * Math.max(0, t - prev.t);
+  const reach = Math.max(Number.isFinite(speed) ? speed : 0, 1) * Math.max(0, t - prev.t);
   const pv = prev.acc ** 2 + reach ** 2;
   const k = pv / (pv + acc ** 2);
   return { x: prev.x + (x - prev.x) * k, y: prev.y + (y - prev.y) * k, acc: Math.sqrt((1 - k) * pv), t };
@@ -74,7 +77,7 @@ export function motionBetween(a: { lat: number; lon: number; t: number }, b: { l
   const dt = (b.t - a.t) / 1000;
   if (dt < 0.5) return null;
   const R = 6_371_000;
-  const dx = ((b.lon - a.lon) * Math.PI) / 180 * R * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  const dx = (relAngle(a.lon, b.lon) * Math.PI) / 180 * R * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
   const dy = ((b.lat - a.lat) * Math.PI) / 180 * R;
   return { speed: Math.hypot(dx, dy) / dt, heading: normDeg((Math.atan2(dx, dy) * 180) / Math.PI) };
 }
@@ -130,7 +133,7 @@ export class LiveGps {
         const course = c.heading === null || Number.isNaN(c.heading) ? null : c.heading;
         const m = c.speed === null || course === null ? this.prev && motionBetween(this.prev, here) : null;
         this.prev = here;
-        const speed = c.speed ?? m?.speed ?? 0;
+        const speed = c.speed !== null && Number.isFinite(c.speed) ? c.speed : (m?.speed ?? 0);
         const heading = course ?? m?.heading ?? null;
         this.onFix({ lat: c.latitude, lon: c.longitude, speed, heading, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null });
       },

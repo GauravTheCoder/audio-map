@@ -18,12 +18,13 @@ export class Projection {
   private readonly cosLat: number;
 
   constructor(readonly origin: LatLon) {
-    this.cosLat = Math.cos((origin.lat * Math.PI) / 180);
+    // floored so the poles do not divide by zero
+    this.cosLat = Math.max(0.01, Math.cos((origin.lat * Math.PI) / 180));
   }
 
   toXY(lat: number, lon: number): Vec {
     return {
-      x: (lon - this.origin.lon) * M_PER_DEG_LON_EQ * this.cosLat,
+      x: relAngle(this.origin.lon, lon) * M_PER_DEG_LON_EQ * this.cosLat,
       y: (lat - this.origin.lat) * M_PER_DEG_LAT,
     };
   }
@@ -31,7 +32,7 @@ export class Projection {
   toLatLon(x: number, y: number): LatLon {
     return {
       lat: this.origin.lat + y / M_PER_DEG_LAT,
-      lon: this.origin.lon + x / (M_PER_DEG_LON_EQ * this.cosLat),
+      lon: wrapLon(this.origin.lon + x / (M_PER_DEG_LON_EQ * this.cosLat)),
     };
   }
 }
@@ -43,6 +44,11 @@ export function bearing(ax: number, ay: number, bx: number, by: number): number 
 
 export function normDeg(d: number): number {
   return ((d % 360) + 360) % 360;
+}
+
+/** Longitude folded into (-180, 180]. */
+function wrapLon(lon: number): number {
+  return relAngle(0, lon);
 }
 
 /** Signed difference b - a in (-180, 180]. Positive means b is clockwise (to the right) of a. */

@@ -56,6 +56,7 @@ describe('rebinding', () => {
     for (const key of ['Escape', 'F1', 'F2']) expect(isReserved({ key })).toBe(true);
     expect(tryBind('speed', { key: 'F2' }, {})).toMatchObject({ ok: false });
     expect(tryBind('speed', { key: 'P', shift: true, ctrl: true }, {})).toMatchObject({ ok: false });
+    expect(tryBind('note', { key: 'Control', shift: false, ctrl: false }, {})).toMatchObject({ ok: false });
     expect(tryBind('speed', { key: 'h' }, {})).toMatchObject({ ok: false, why: expect.stringContaining('Heading') });
     expect(tryBind('speed', { key: 'F8' }, {})).toEqual({ ok: true });
   });

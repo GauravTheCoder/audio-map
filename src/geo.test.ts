@@ -79,3 +79,15 @@ describe('line helpers', () => {
     expect(findBend([{ x: 0, y: 0, d: 0 }, { x: 0, y: 10, d: 10 }, { x: 0, y: 20, d: 20 }], 20, 30)).toBeNull();
   });
 });
+
+describe('Projection across the dateline and poles', () => {
+  it('measures the short way round', () => {
+    const p = new Projection({ lat: 0, lon: 179.99 });
+    expect(Math.abs(p.toXY(0, -179.99).x)).toBeLessThan(5000);
+    expect(p.toLatLon(2000, 0).lon).toBeLessThan(0);
+  });
+  it('stays finite at a pole', () => {
+    const ll = new Projection({ lat: 90, lon: 0 }).toLatLon(1000, 0);
+    expect(Number.isFinite(ll.lon)).toBe(true);
+  });
+});

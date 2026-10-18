@@ -2,6 +2,7 @@ import type { KeyOverrides } from './keymap';
 import type { CustomSound, SoundProfile } from './profiles';
 import type { PlaceGroup } from './world';
 import { SOUND_THEMES, type SoundTheme } from './audio/themes';
+import { validate } from './backup';
 
 export type SpeechMode = 'screenreader' | 'voice';
 export type Units = 'metric' | 'imperial';
@@ -75,7 +76,8 @@ export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
-      const s = { ...DEFAULTS, ...JSON.parse(raw) } as Settings;
+      // stored values are untrusted: keep only well-typed ones, so corrupt or old data falls back to defaults
+      const s = { ...DEFAULTS, ...validate({ app: 'audio-map', settings: JSON.parse(raw) }).settings } as Settings;
       // earlier names: 'default' (never chosen, just the old default) and 'lowVision'
       if (s.display !== 'standard') s.display = 'highContrast';
       if (!Array.isArray(s.mutedGroups)) s.mutedGroups = [];
@@ -99,6 +101,7 @@ export function saveSettings(s: Settings): void {
 }
 
 export function fmtDistance(m: number, units: Units): string {
+  m = Math.max(0, m); // progress along a route can overshoot its end
   if (units === 'imperial') {
     const ft = m * 3.28084;
     if (ft < 1000) return `${roundTo(ft, ft < 100 ? 10 : 50)} feet`;

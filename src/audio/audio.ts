@@ -122,7 +122,8 @@ export class AudioEngine {
   }
 
   resume() {
-    if (this.ctx.state !== 'running') void this.ctx.resume();
+    // not guarded by state: a suspend() requested just before can still be pending while state reads 'running'
+    void this.ctx.resume();
   }
 
   setVolume(v: number) {
@@ -588,7 +589,7 @@ class CarVoice implements VehicleVoice {
   private o2: OscillatorNode;
   private f: BiquadFilterNode;
   private gain: GainNode;
-  private rough: { gain: GainNode };
+  private rough: { src: AudioBufferSourceNode; gain: GainNode };
   private gear = 1;
   private static readonly GEARS = [0, 7, 14, 21, 28, 40]; // upper speed (m/s) for gears 1..5
   constructor(
@@ -624,7 +625,7 @@ class CarVoice implements VehicleVoice {
     rg.gain.value = 0;
     src.connect(rf).connect(rg).connect(out);
     src.start();
-    this.rough = { gain: rg };
+    this.rough = { src, gain: rg };
   }
   update(s: EngineState) {
     const t = this.a.now;
@@ -635,7 +636,7 @@ class CarVoice implements VehicleVoice {
       this.gear = gear;
       // brief dip in the engine on a gear change
       this.gain.gain.cancelScheduledValues(t);
-      this.gain.gain.setValueAtTime(0.03, t);
+      this.gain.gain.setTargetAtTime(0.03, t, 0.01); // not a jump, which would click
     }
     const lo = G[gear - 1];
     const hi = G[gear];
@@ -650,23 +651,21 @@ class CarVoice implements VehicleVoice {
     this.rough.gain.gain.setTargetAtTime(s.surface !== 'paved' && s.speed > 0.5 ? 0.15 + Math.min(0.2, s.speed / 40) : 0, t, 0.1);
   }
   dispose() {
-    this.o1.stop();
-    this.o2.stop();
-    this.gain.disconnect();
-    this.rough.gain.disconnect();
+    fadeOut(this.a, [this.gain, this.rough.gain], [this.o1, this.o2, this.rough.src]);
   }
 }
 
 class HelicopterVoice implements VehicleVoice {
   private lfo: OscillatorNode;
   private whine: OscillatorNode;
+  private src: AudioBufferSourceNode;
   private nodes: AudioNode[] = [];
   constructor(
     private a: AudioEngine,
     out: AudioNode,
   ) {
     const ctx = a.ctx;
-    const src = ctx.createBufferSource();
+    const src = (this.src = ctx.createBufferSource());
     src.buffer = a.noise;
     src.loop = true;
     const f = ctx.createBiquadFilter();
@@ -700,10 +699,19 @@ class HelicopterVoice implements VehicleVoice {
     this.whine.frequency.setTargetAtTime(1400 + r * 300, t, 0.3);
   }
   dispose() {
-    this.lfo.stop();
-    this.whine.stop();
-    this.nodes.forEach((n) => n.disconnect());
+    fadeOut(this.a, this.nodes as GainNode[], [this.src, this.lfo, this.whine]);
   }
+}
+
+/** Silences a voice over a few milliseconds before stopping its sources, so switching vehicle does not click. */
+function fadeOut(a: AudioEngine, gains: GainNode[], sources: AudioScheduledSourceNode[]) {
+  const t = a.now;
+  for (const g of gains) {
+    g.gain.cancelScheduledValues(t);
+    g.gain.setTargetAtTime(0, t, 0.01);
+  }
+  for (const s of sources) s.stop(t + 0.06);
+  sources[0].onended = () => gains.forEach((g) => g.disconnect());
 }
 
 function makeNoise(ctx: AudioContext): AudioBuffer {

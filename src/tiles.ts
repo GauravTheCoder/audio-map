@@ -21,8 +21,9 @@ const SNAP = 1.6;
 let tileUrl: Promise<string> | null = null;
 
 /** The current tile URL template (it changes when the map data is updated). */
-function template(signal?: AbortSignal): Promise<string> {
-  tileUrl ??= fetch(TILEJSON, { signal })
+// Shared by every caller, so it must not be tied to one caller's abort signal.
+function template(): Promise<string> {
+  tileUrl ??= fetch(TILEJSON, { signal: AbortSignal.timeout(15_000) })
     .then((r) => {
       if (!r.ok) throw new Error(`TileJSON ${r.status}`);
       return r.json();
@@ -32,9 +33,10 @@ function template(signal?: AbortSignal): Promise<string> {
   return tileUrl;
 }
 
+const MAX_LAT = 85.0511; // the Web Mercator limit
 export const tileX = (lon: number) => ((lon + 180) / 360) * 2 ** Z;
 export const tileY = (lat: number) => {
-  const r = (lat * Math.PI) / 180;
+  const r = (Math.max(-MAX_LAT, Math.min(MAX_LAT, lat)) * Math.PI) / 180;
   return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** Z;
 };
 /** global tile-unit coordinates (x right, y down) to lat/lon */
@@ -47,8 +49,10 @@ function toLatLon(gx: number, gy: number): LatLon {
 
 /** One tile at zoom Z. */
 export async function fetchTile(tx: number, ty: number, signal?: AbortSignal): Promise<VectorTile> {
-  const url = await template(signal);
-  const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(tx)).replace('{y}', String(ty)), { signal });
+  const url = await template();
+  // tiles past the dateline wrap round to the other side of the map
+  const wx = ((tx % 2 ** Z) + 2 ** Z) % 2 ** Z;
+  const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(wx)).replace('{y}', String(ty)), { signal });
   if (!r.ok) throw new Error(`Tile ${tx},${ty}: ${r.status}`);
   return new VectorTile(new PbfReader(new Uint8Array(await r.arrayBuffer())));
 }
@@ -271,6 +275,11 @@ export async function fetchTileArea(center: LatLon, radius: number, signal: Abor
   for (const l of lines) for (let i = 0; i < l.pts.length; i++) degree.set(l.pts[i], (degree.get(l.pts[i]) ?? 0) + (i === 0 || i === l.pts.length - 1 ? 1 : 2));
   const splits = new Map<number, { t: number; id: number }[]>(); // segment index -> nodes to insert
   const remap = new Map<number, number>();
+  // a joined end can itself be joined onward later, so follow the chain (bounded, in case of a loop)
+  const resolve = (id: number) => {
+    for (let i = 0; i < 8 && remap.has(id); i++) id = remap.get(id)!;
+    return id;
+  };
   for (const l of lines) {
     for (const end of [l.pts[0], l.pts[l.pts.length - 1]]) {
       if (degree.get(end) !== 1 || remap.has(end)) continue;
@@ -341,7 +350,7 @@ export async function fetchTileArea(center: LatLon, radius: number, signal: Abor
   for (const l of lines as (RoadLine & { inserts?: Map<number, number[]> })[]) {
     const pts: number[] = [];
     l.pts.forEach((id, i) => {
-      pts.push(remap.get(id) ?? id);
+      pts.push(resolve(id));
       for (const extra of l.inserts?.get(i) ?? []) pts.push(extra);
     });
     l.pts = pts.filter((id, j) => j === 0 || id !== pts[j - 1]);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game } from './game';
+import { Game, minutesText } from './game';
+import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
 import { World, type Place } from './world';
@@ -76,6 +77,13 @@ beforeEach(() => {
 });
 
 describe('commands', () => {
+  it('names the rebound key in the no-destination hint', () => {
+    const { game, said, g } = setup();
+    g.settings.keyBindings = { navigate: { key: 'k', ctrl: true } };
+    game.run('i');
+    expect(said.at(-1)).toBe('No destination. Press Control K to choose one.');
+  });
+
   it('H reports compass heading', () => {
     const { game, said, g } = setup();
     g.heading = 90;
@@ -266,6 +274,14 @@ describe('notes', () => {
     game.run('v', { shift: true });
     expect(said.at(-1)).toBe('Note deleted.');
     expect(g.notes).toHaveLength(0);
+  });
+
+  it('Shift+V deletes the right note after another tab added one', () => {
+    const { game } = setup();
+    game.addNote('here');
+    saveNotes([{ text: 'elsewhere', lat: 10, lon: 10 }, ...loadNotes()]);
+    game.run('v', { shift: true });
+    expect(loadNotes().map((n) => n.text)).toEqual(['elsewhere']);
   });
 
   it('Shift+V far from any note reports none', () => {
@@ -493,6 +509,25 @@ describe('roundabouts', () => {
     }
     expect(g.ring).toBeNull();
   });
+
+  it('keeps the ring through a brief swerve off it', () => {
+    const { g } = setup('car');
+    g.world = ringWorld();
+    g.x = 25;
+    g.y = 0;
+    g.heading = 180;
+    g.speed = 5;
+    g.updateRoad(true);
+    g.updateRing();
+    g.x = 0;
+    g.y = 150;
+    g.updateRoad(true);
+    for (let i = 0; i < 3; i++) {
+      g.clock += 1 / 60;
+      g.updateRing();
+    }
+    expect(g.ring).not.toBeNull();
+  });
 });
 
 describe('grid mode', () => {
@@ -653,5 +688,22 @@ describe('stops, entrances and crossings', () => {
     g.speed = 1;
     g.checkHazards();
     expect(said.at(-1)).toBe('Crossing with signals ahead, 20 metres, over Oak Street, south of Elm Street. Audible signal, push button');
+  });
+});
+
+describe('minutesText', () => {
+  it('pluralises hours and minutes and drops zero minutes', () => {
+    expect([1, 59, 60, 61, 120, 121, 181].map(minutesText)).toEqual(['1 minute', '59 minutes', '1 hour', '1 hour 1 minute', '2 hours', '2 hours 1 minute', '3 hours 1 minute']);
+  });
+});
+
+describe('hold (touch and voice)', () => {
+  it('announces the speed change when a held brake lets go', () => {
+    const { game, said, g } = setup();
+    g.speed = 5;
+    game.hold('Slash', true);
+    g.speed = 0;
+    game.hold('Slash', false);
+    expect(said.at(-1)).toBe('Stopped.');
   });
 });

@@ -9,7 +9,9 @@ const KEY = 'audio-map-routes';
 export function loadRoutes(): SavedRoute[] {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '[]');
-    return Array.isArray(v) ? v : [];
+    const ok = (p: { lat?: unknown; lon?: unknown } | undefined) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon);
+    // stored data is untrusted: drop entries the UI could not use
+    return Array.isArray(v) ? v.filter((r) => typeof r?.name === 'string' && ok(r.start) && typeof r.dest?.name === 'string' && ok(r.dest)) : [];
   } catch {
     return [];
   }

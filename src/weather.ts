@@ -40,6 +40,7 @@ async function load(p: LatLon, units: Units): Promise<Forecast> {
   const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT) });
   if (!res.ok) throw new Error(String(res.status));
   const data = (await res.json()) as Forecast;
+  if (!data?.current || !Array.isArray(data.daily?.sunset) || !Array.isArray(data.daily?.sunrise)) throw new Error('unexpected forecast');
   cache.set(key, { at: Date.now(), data });
   return data;
 }
@@ -63,7 +64,7 @@ export async function conditionsReport(p: LatLon, units: Units): Promise<string>
   const nextSet = f.daily.sunset.findIndex((t) => Date.parse(t) > now);
   if (c.is_day && nextSet >= 0) {
     const mins = Math.round((Date.parse(f.daily.sunset[nextSet]) - now) / 60_000);
-    parts.push(`daylight, sunset at ${clock(f.daily.sunset[nextSet])}${mins <= 60 ? `, in ${mins} minutes` : ''}`);
+    parts.push(`daylight, sunset at ${clock(f.daily.sunset[nextSet])}${mins <= 60 ? `, in ${Math.max(1, mins)} minute${mins <= 1 ? '' : 's'}` : ''}`);
   } else {
     const nextRise = f.daily.sunrise.findIndex((t) => Date.parse(t) > now);
     parts.push(`dark${nextRise >= 0 ? `, sunrise at ${clock(f.daily.sunrise[nextRise])}` : ''}`);

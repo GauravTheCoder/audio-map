@@ -4,7 +4,7 @@ import { AreaMap, areaText, type Area } from './areas';
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
-import { lookup } from './keymap';
+import { bindingsOf, describeBinding, lookup, type ActionId, type Binding } from './keymap';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
@@ -25,9 +25,13 @@ import { departuresReport, transitous } from './transit';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
 const STEP = 1 / 60;
-/** distances (m) at which progress toward the destination is spoken */
-function minutesText(minutes: number): string {
-  return minutes < 60 ? `${minutes} minute${minutes === 1 ? '' : 's'}` : `${Math.floor(minutes / 60)} hour${minutes >= 120 ? 's' : ''} ${minutes % 60} minutes`;
+/** seconds off the ring before the roundabout counts as left */
+const RING_EXIT_DELAY = 0.5;
+export function minutesText(minutes: number): string {
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+  const h = Math.floor(minutes / 60);
+  if (!h) return plural(minutes, 'minute');
+  return minutes % 60 ? `${plural(h, 'hour')} ${plural(minutes % 60, 'minute')}` : plural(h, 'hour');
 }
 
 const FILTER_NAMES: Record<PlaceGroup, string> = {
@@ -41,6 +45,7 @@ const FILTER_NAMES: Record<PlaceGroup, string> = {
   other: 'other places',
 };
 const FILTERS: (PlaceGroup | null)[] = [null, 'food', 'shop', 'transport', 'health', 'culture', 'nature', 'service'];
+/** distances (m) at which progress toward the destination is spoken */
 const MILESTONES = [50, 100, 200, 500, 1000, 2000, 5000];
 /** grid mode step sizes, in metres (yards with imperial units) */
 const GRID_STEPS = [1, 10, 100, 1000];
@@ -445,6 +450,7 @@ export class Game {
       this.loadCenter = at;
       // the area name is nice to have, not worth holding up the start for
       const area = await Promise.race([areaP, new Promise<null>((r) => setTimeout(() => r(null), 2500))]);
+      if (abort.signal.aborted) return false; // a newer load took over while the name was pending
       if (area) {
         if (!initial && area !== this.areaName) this.speech.say(`Entering ${area}`, 'low');
         this.areaName = area;
@@ -536,8 +542,20 @@ export class Game {
     this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
   }
 
+  /** The key currently bound to an action, as spoken. */
+  private keyText(id: ActionId): string {
+    return describeBinding(this.keyFor(id));
+  }
+
+  keyFor(id: ActionId): Binding {
+    return bindingsOf(id, this.settings.keyBindings)[0];
+  }
+
   hold(code: string, on: boolean) {
+    const was = this.input.isDown(code);
+    if (on && !was) this.speedAtPress = this.speed; // touch and voice get the same speed announcement as the keys
     this.input.setHeld(code, on);
+    if (!on && was) this.keyUp(code);
   }
 
   pause() {
@@ -593,7 +611,7 @@ export class Game {
 
   private frame = (t: number) => {
     requestAnimationFrame(this.frame);
-    const dt = Math.min(0.25, (t - this.lastFrame) / 1000);
+    const dt = Math.max(0, Math.min(0.25, (t - this.lastFrame) / 1000)); // resume() can stamp a time later than this frame's
     this.lastFrame = t;
     if (this.paused || !this.world) return;
     this.acc += dt;
@@ -971,9 +989,11 @@ export class Game {
     const w = this.world!;
     const rels: number[] = [];
     let droppedBehind = false;
+    // if no road behind carries the name we arrived on (one-way, filtered), nothing is the road we came from to drop by name
+    const arrivedBehind = j.exits.some((x) => Math.abs(relAngle(this.heading, w.edgeBearing(x.from, x.edge))) > 150 && x.edge.way.name === this.streetName);
     for (const { from, edge } of j.exits) {
       const rel = relAngle(this.heading, w.edgeBearing(from, edge));
-      if (Math.abs(rel) > 150 && (!droppedBehind || edge.way.name === this.streetName)) {
+      if (Math.abs(rel) > 150 && (edge.way.name === this.streetName || (!arrivedBehind && !droppedBehind))) {
         droppedBehind = true;
         continue;
       }
@@ -1245,8 +1265,8 @@ export class Game {
     }
     if (!near) {
       if (r.offSince < 0) r.offSince = this.clock;
-      else {
-        // left it: the new street is announced as usual, and the soft blip plays once clear of the ring
+      else if (this.clock - r.offSince > RING_EXIT_DELAY) {
+        // off the ring for a moment, not just a swerve or a noisy fix, so it is left: the new street is announced as usual, and the soft blip plays once clear of the ring
         this.ring = null;
         this.inJunction = new Set(r.nodes.map((n) => n.id));
       }
@@ -1390,12 +1410,14 @@ export class Game {
     let droppedBehind = false;
     const j = w.junction(n, this.filter, this.junctionRadius);
     const seen = new Set<string>();
+    // if no road behind carries the name we arrived on (one-way, filtered), only the first one behind is taken as the road we came from
+    const arrivedBehind = j.exits.some((x) => Math.abs(relAngle(ref, w.edgeBearing(x.from, x.edge))) > 150 && x.edge.way.name === arriveName);
     for (const { from, edge: e } of j.exits) {
       const b = w.edgeBearing(from, e);
       const rel = relAngle(ref, b);
       const a = Math.abs(rel);
       // the road we arrive on (both carriageways of a divided road)
-      if (a > 150 && (!droppedBehind || e.way.name === arriveName)) {
+      if (a > 150 && (e.way.name === arriveName || (!arrivedBehind && !droppedBehind))) {
         droppedBehind = true;
         continue;
       }
@@ -1606,6 +1628,7 @@ export class Game {
 
   private dropCorridor() {
     this.routeReq++;
+    this.routePending = false; // the request it belonged to is now superseded, and its finally will not clear it
     this.corridorAbort?.abort();
     this.corridorAbort = null;
     this.corridorLoading = false;
@@ -1762,11 +1785,11 @@ export class Game {
     const now = performance.now();
     const double = now - this.lastIPress < 400;
     this.lastIPress = double ? -Infinity : now; // a third quick press starts over
-    if (!this.dest) return this.speech.say('No destination. Press Control D to choose one.', 'high');
+    if (!this.dest) return this.speech.say(`No destination. Press ${this.keyText('navigate')} to choose one.`, 'high');
     const r = this.route;
     if (!r) {
       const why = !this.settings.turnByTurn
-        ? 'Turn by turn is off; press T to turn it on.'
+        ? `Turn by turn is off; press ${this.keyText('turnByTurn')} to turn it on.`
         : this.vehicle.id === 'helicopter'
           ? 'No turn by turn in the helicopter; follow the beacon.'
           : this.routePending
@@ -1839,7 +1862,7 @@ export class Game {
     if (this.vehicle.id === 'helicopter') {
       return this.speech.say('Turn by turn on, but not available in the helicopter. The beacon points straight to the destination.', 'high');
     }
-    if (!this.dest) return this.speech.say('Turn by turn on. Press Control D to choose a destination.', 'high');
+    if (!this.dest) return this.speech.say(`Turn by turn on. Press ${this.keyText('navigate')} to choose a destination.`, 'high');
     this.speech.say('Turn by turn on.', 'high');
     void this.computeRoute(true);
   }
@@ -2242,7 +2265,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
-        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -3063,7 +3086,7 @@ export class Game {
    * straight-line distance and direction.
    */
   private distanceToGo() {
-    if (!this.dest) return this.speech.say('No destination. Press Control D to choose one.', 'high');
+    if (!this.dest) return this.speech.say(`No destination. Press ${this.keyText('navigate')} to choose one.`, 'high');
     const u = this.settings.units;
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     const b = bearingTo(this.x, this.y, this.dest.x, this.dest.y);
@@ -3095,6 +3118,7 @@ export class Game {
 
   /** Shift + V: delete the note you are standing at. */
   private deleteNote() {
+    this.loadNotes(); // another tab may have changed them, and the index below must match storage
     const here = this.notes.findIndex((n) => dist(this.x, this.y, n.x, n.y) < 25);
     if (here < 0) return this.speech.say('No note within 25 metres.', 'high');
     const all = loadNotes();
@@ -3157,7 +3181,7 @@ export class Game {
   }
 
   private destinationInfo() {
-    if (!this.dest) return this.speech.say('No destination. Press Control D to search for one, or Tab to pick a nearby place and Enter.', 'high');
+    if (!this.dest) return this.speech.say(`No destination. Press ${this.keyText('navigate')} to search for one, or ${this.keyText('nextPlace')} to pick a nearby place and ${this.keyText('setDestination')}.`, 'high');
     const u = this.settings.units;
     const d = dist(this.x, this.y, this.dest.x, this.dest.y);
     const b = bearingTo(this.x, this.y, this.dest.x, this.dest.y);

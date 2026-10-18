@@ -10,6 +10,9 @@ describe('fmtDistance', () => {
     expect(fmtDistance(1000, 'metric')).toBe('1.0 kilometres');
     expect(fmtDistance(12_400, 'metric')).toBe('12 kilometres');
   });
+  it('never says a negative distance', () => {
+    for (const u of ['metric', 'imperial'] as const) expect(fmtDistance(-12, u)).toBe(fmtDistance(0, u));
+  });
   it('imperial uses feet then miles', () => {
     expect(fmtDistance(10, 'imperial')).toBe('30 feet');
     expect(fmtDistance(100, 'imperial')).toBe('350 feet');
@@ -57,5 +60,15 @@ describe('loadSettings', () => {
     store(null);
     loadSettings().mutedGroups.push('food');
     expect(loadSettings().mutedGroups).toEqual([]);
+  });
+});
+
+describe('loadSettings with corrupt storage', () => {
+  it('falls back to defaults for wrongly typed values', () => {
+    vi.stubGlobal('localStorage', { getItem: () => '{"customSound":null,"soundProfile":"bogus","vehicle":"boat","volume":"x","units":"furlongs"}' });
+    const s = loadSettings();
+    vi.unstubAllGlobals();
+    expect(s.customSound).toEqual({ places: 'notable', sideStreets: true, extras: true });
+    expect([s.soundProfile, s.vehicle, s.volume, s.units]).toEqual(['simple', 'walker', 0.8, 'metric']);
   });
 });

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { classify } from './touch';
+import { describe, expect, it, vi } from 'vitest';
+import { bindingsOf } from './keymap';
+import { GESTURES, classify, perform } from './touch';
 
 describe('classify', () => {
   it('tells taps from long presses', () => {
@@ -17,5 +18,13 @@ describe('classify', () => {
     expect(classify(25, 0, 200, 1)).toBeNull();
     expect(classify(0, -90, 200, 2)).toBeNull();
     expect(classify(-90, 0, 200, 2)).toBe('two-swipe-left');
+  });
+});
+
+describe('perform with rebound keys', () => {
+  it('runs the key currently bound to the gesture action', () => {
+    const run = vi.fn();
+    perform({ run, hold: vi.fn(), keyFor: (id) => bindingsOf(id, { whereAmI: { key: 'k' } })[0] }, GESTURES.tap);
+    expect(run).toHaveBeenCalledWith('k', expect.objectContaining({ key: 'k' }));
   });
 });

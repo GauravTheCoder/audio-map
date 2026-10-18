@@ -7,7 +7,7 @@ import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
-import { initPreview } from './preview';
+import { initPreview, stopPreview } from './preview';
 import type { PlaceGroup } from './world';
 import { Speech } from './speech';
 import { Tutorial } from './tutorial';
@@ -35,7 +35,7 @@ let selected: Selected = loadPlace() ?? { name: 'Times Square, New York', lat: 4
 function parseShared(): { from: Selected; to?: Selected } | null {
   const pt = (v: string | null): Selected | undefined => {
     const [lat, lon, ...rest] = (v ?? '').split(',');
-    const p = { lat: Number(lat), lon: Number(lon), name: decodeURIComponent(rest.join(',')) || 'Shared place' };
+    const p = { lat: Number(lat), lon: Number(lon), name: rest.join(',') || 'Shared place' };
     return lat && lon && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180 ? p : undefined;
   };
   try {
@@ -149,26 +149,32 @@ function select(p: Selected, announce = true) {
 function loadPlace(): Selected | null {
   try {
     const raw = localStorage.getItem(PLACE_KEY);
-    return raw ? (JSON.parse(raw) as Selected) : null;
+    const p = raw ? (JSON.parse(raw) as Selected) : null;
+    // stored data is untrusted: a place without coordinates would stop the map from loading
+    return p && typeof p.name === 'string' && Number.isFinite(p.lat) && Number.isFinite(p.lon) ? p : null;
   } catch {
     return null;
   }
 }
 
+let searchSeq = 0;
 async function runSearch() {
   const q = $<HTMLInputElement>('search').value.trim();
   const status = $('search-status');
   const list = $<HTMLUListElement>('results');
   if (!q) return;
+  const seq = ++searchSeq;
   status.textContent = 'Searching…';
   list.replaceChildren();
   let results: GeocodeResult[] = [];
   try {
     results = await geocode(q);
   } catch {
+    if (seq !== searchSeq) return;
     status.textContent = 'Search failed. Check your connection and try again.';
     return;
   }
+  if (seq !== searchSeq) return;
   if (!results.length) {
     status.textContent = 'No results found.';
     return;
@@ -256,6 +262,7 @@ function closeMenu() {
 }
 
 function startGame(learn = false) {
+  stopPreview(speech);
   if (!game) {
     const audio = new AudioEngine(settings.volume, settings.soundTheme); // created on a user gesture so the browser allows sound
     game = new Game(settings, speech, audio, map);
@@ -377,8 +384,10 @@ function showFavorites() {
   }
 }
 
+let navSeq = 0;
 async function runNavSearch() {
   if (!game) return;
+  const seq = ++navSeq;
   const q = $<HTMLInputElement>('nav-q').value.trim();
   if (!q) return showFavorites();
   const status = $('nav-status');
@@ -397,13 +406,16 @@ async function runNavSearch() {
   for (const m of game.findPlaces(q)) add(`${m.name}, ${m.detail}`, () => pickDestination(m.name, m.lat, m.lon, 0));
   status.textContent = 'Searching…';
   try {
-    for (const r of await geocode(q, game.position ?? undefined)) {
+    const found = await geocode(q, game.position ?? undefined);
+    if (seq !== navSeq) return;
+    for (const r of found) {
       const name = shortName(r.name);
       add(`${name}, ${game.describeFromHere(r.lat, r.lon)}`, () => pickDestination(name, r.lat, r.lon, r.radius));
     }
   } catch {
     // keep any nearby matches
   }
+  if (seq !== navSeq) return;
   const n = list.children.length;
   status.textContent = n ? `${n} results. Choose one to ${navMode === 'jump' ? 'jump' : 'navigate'} there.` : 'No results found.';
   (list.querySelector('button') as HTMLButtonElement | null)?.focus();
@@ -573,16 +585,20 @@ document.addEventListener(
 setupTouch(stage, () => game);
 
 const voiceBtn = $<HTMLButtonElement>('voice-btn');
-const toggleVoice = setupVoice(() => game, (s) => speech.say(s, 'high'));
+const toggleVoice = setupVoice(
+  () => game,
+  (s) => speech.say(s, 'high'),
+  (on) => voiceBtn.setAttribute('aria-pressed', String(on)),
+);
 if (toggleVoice) {
-  voiceBtn.addEventListener('click', () => voiceBtn.setAttribute('aria-pressed', String(toggleVoice())));
+  voiceBtn.addEventListener('click', toggleVoice);
 } else {
   voiceBtn.hidden = true;
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'F4') return;
   e.preventDefault();
-  if (toggleVoice) voiceBtn.setAttribute('aria-pressed', String(toggleVoice()));
+  if (toggleVoice) toggleVoice();
   else speech.say('Voice commands are not supported in this browser.', 'high');
 });
 
@@ -595,4 +611,9 @@ openMenu('main');
 // the dev server must not serve stale files from a worker
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   void navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+
+// A button for the dialogs that otherwise close only with Escape (touch); it cancels the way Escape does.
+for (const b of document.querySelectorAll<HTMLButtonElement>('dialog [data-cancel]')) {
+  b.addEventListener('click', () => b.closest('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })));
 }

@@ -54,7 +54,8 @@ export class Speech {
 
   private output(text: string, priority: Priority) {
     if (this.mode === 'voice' && 'speechSynthesis' in window) {
-      if (priority === 'high') speechSynthesis.cancel();
+      // a backlog of stale place announcements at speed is worse than dropping it for the newest message
+      if (priority === 'high' || (priority === 'normal' && speechSynthesis.pending)) speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = this.rate;
       u.onstart = () => this.onSpeakingChange?.(true);
@@ -90,7 +91,8 @@ export class Speech {
   /** An open modal dialog makes the page inert, so its messages go to a live region inside it. */
   private region(assertive: boolean): HTMLElement {
     const dlgs = document.querySelectorAll('dialog[open]');
-    const dlg = dlgs[dlgs.length - 1];
+    // the topmost modal is the one holding focus; document order says nothing about stacking
+    const dlg = [...dlgs].find((d) => d.contains(document.activeElement)) ?? dlgs[dlgs.length - 1];
     if (!dlg) return assertive ? this.assertive : this.polite;
     const kind = assertive ? 'assertive' : 'polite';
     const have = dlg.querySelector<HTMLElement>(`:scope > [data-live="${kind}"]`);

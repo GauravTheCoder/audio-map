@@ -58,6 +58,8 @@ export class Tutorial {
   ) {}
 
   begin() {
+    clearTimeout(this.timer);
+    this.timer = undefined;
     this.step = 0;
     this.pos = 0;
     this.marks = [this.probe()];

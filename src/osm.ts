@@ -66,9 +66,12 @@ export const HIGHWAYS =
 function bbox(c: LatLon, r: number): string {
   const lat = Math.round(c.lat / 0.002) * 0.002;
   const lon = Math.round(c.lon / 0.002) * 0.002;
-  const dLat = r / 110_540;
-  const dLon = r / (111_320 * Math.cos((lat * Math.PI) / 180));
-  return [lat - dLat, lon - dLon, lat + dLat, lon + dLon].map((v) => v.toFixed(5)).join(',');
+  // snapping moves the centre by up to half a step (~111 m), so widen by that to still cover the requested radius
+  const reach = r + 111;
+  const dLat = reach / 110_540;
+  const dLon = reach / (111_320 * Math.cos((lat * Math.PI) / 180));
+  // Overpass cannot take a box across the dateline or past a pole, so clip to the map
+  return [Math.max(-90, lat - dLat), Math.max(-180, lon - dLon), Math.min(90, lat + dLat), Math.min(180, lon + dLon)].map((v) => v.toFixed(5)).join(',');
 }
 
 export interface OverpassEl {
@@ -177,14 +180,17 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
   // door node id -> places whose outline it is on
   const doorOf = new Map<number, RawPlace[]>();
   const doors: OverpassEl[] = [];
+  // the query's union blocks can return one element twice
+  const seen = new Set<string>();
   for (const el of els) {
     const t = el.tags;
-    if (!t) continue;
+    if (!t || seen.has(el.type + el.id)) continue;
+    seen.add(el.type + el.id);
     const lat = el.lat ?? el.center?.lat;
     const lon = el.lon ?? el.center?.lon;
     if (lat === undefined || lon === undefined) continue;
     const kind = accessKind(t);
-    if (kind) access.push({ lat, lon, kind, name: t.name ?? t.ref });
+    if (kind && !SKIP_DOOR.test(t.entrance ?? '')) access.push({ lat, lon, kind, name: t.name ?? t.ref });
     if (t.entrance && el.type === 'node' && !t.amenity && !t.shop && !t.railway && !t.highway) {
       doors.push(el);
       continue;
@@ -204,7 +210,7 @@ export function parsePlaces(els: OverpassEl[]): RawPlaces {
     } else if (t.railway === 'subway_entrance' || t.railway === 'train_station_entrance') {
       places.push({ id: `n${el.id}`, lat, lon, tags: t });
     } else if (t.railway === 'platform') {
-      places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: { ...t, name: t.name ?? `Platform ${t.ref}` } });
+      places.push({ id: `${el.type[0]}${el.id}`, lat, lon, tags: { ...t, name: t.name ?? (t.ref ? `Platform ${t.ref}` : 'Platform') } });
     } else if (t.name) {
       const place: RawPlace = { id: `${el.type[0]}${el.id}`, lat, lon, tags: t };
       places.push(place);
@@ -272,6 +278,7 @@ async function overpass(query: string, signal: AbortSignal, onRetry?: RetryNotic
       const json = (await res.json()) as { elements: OverpassEl[]; remark?: string };
       // Overpass reports timeouts and memory errors as a 200 with a remark and partial data.
       if (json.remark && /error|timed out|out of memory/i.test(json.remark)) throw new Error(json.remark);
+      if (!Array.isArray(json.elements)) throw new Error('Overpass sent no elements');
       void cachePut(key, json.elements);
       return json.elements;
     } catch (e) {
@@ -343,13 +350,15 @@ export interface GeocodeResult {
 }
 
 /** Search for places. With `near`, results around that point are preferred (not required). */
+const GEOCODE_TIMEOUT_MS = 15_000;
+
 export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]> {
   let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(q)}`;
   if (near) {
     const d = 0.15; // ~15 km
     url += `&viewbox=${near.lon - d},${near.lat + d},${near.lon + d},${near.lat - d}`;
   }
-  const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' } });
+  const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' }, signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Search failed (${res.status})`);
   const json = (await res.json()) as { display_name: string; lat: string; lon: string; boundingbox?: string[] }[];
   return json.map((r) => {
@@ -368,7 +377,7 @@ export async function geocode(q: string, near?: LatLon): Promise<GeocodeResult[]
 export async function reverseGeocode(p: LatLon): Promise<string | null> {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&lat=${p.lat}&lon=${p.lon}`;
-    const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' } });
+    const res = await fetch(url, { headers: { 'Accept-Language': navigator.language || 'en' }, signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) });
     if (!res.ok) return null;
     const json = (await res.json()) as { address?: Record<string, string> };
     const a = json.address ?? {};

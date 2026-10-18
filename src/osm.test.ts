@@ -66,3 +66,15 @@ describe('accessKind', () => {
     expect(accessKind({ amenity: 'cafe', name: 'Joe' })).toBeNull();
   });
 });
+
+describe('parsePlaces edge cases', () => {
+  it('ignores emergency-type doors and repeated elements for access', () => {
+    const door: OverpassEl = { type: 'node', id: 1, lat: 1, lon: 1, tags: { entrance: 'yes' } };
+    const r = parsePlaces([door, door, { type: 'node', id: 2, lat: 1, lon: 1, tags: { entrance: 'emergency' } }]);
+    expect(r.access).toHaveLength(1);
+  });
+  it('names a platform without name or ref plainly', () => {
+    const r = parsePlaces([{ type: 'node', id: 3, lat: 1, lon: 1, tags: { railway: 'platform' } }]);
+    expect(r.places[0].tags.name).toBe('Platform');
+  });
+});
