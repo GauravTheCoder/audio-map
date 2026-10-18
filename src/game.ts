@@ -4,6 +4,7 @@ import { AreaMap, areaText, type Area } from './areas';
 import { AudioEngine } from './audio/audio';
 import { cueLevelScale, duckGain, placeSpeech, placeSpeechGap } from './audio/tuning';
 import { Input, type Command } from './input';
+import { lookup } from './keymap';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type RawPlaces, type RawRoads } from './osm';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
@@ -264,6 +265,7 @@ export class Game {
   onNavigate?: () => void;
   onJump?: () => void;
   onNote?: () => void;
+  onOsmNote?: (at: LatLon) => void;
   /** sees every key first; returning true consumes it */
   onKey?: (c: Command) => boolean;
   onSaveRoute?: () => void;
@@ -531,6 +533,10 @@ export class Game {
   run(key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) {
     const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : /^\d$/.test(key) ? `Digit${key}` : key;
     this.command({ key, code, shift: !!mods.shift, ctrl: !!mods.ctrl, alt: false, repeat: false });
+  }
+
+  hold(code: string, on: boolean) {
+    this.input.setHeld(code, on);
   }
 
   pause() {
@@ -2016,139 +2022,153 @@ export class Game {
     }
     if (c.repeat && c.code !== 'Tab') return;
 
-    switch (c.key.length === 1 ? c.key.toLowerCase() : c.key) {
-      case 'Control':
+    const action = lookup(c, this.settings.keyBindings);
+    if (!action) return false;
+    switch (action) {
+      case 'stopSpeech':
         this.speech.stop();
         return;
-      case 'Escape':
+      case 'menu':
         this.onMenu?.('main');
         return;
-      case 'F1':
-      case 'k':
+      case 'help':
         return this.help();
-      case 'F3':
+      case 'calibrate':
+        return this.calibrate();
+      case 'toggleGrid':
         return this.toggleGrid();
-      case 'h':
-        if (c.shift) return this.calibrate();
+      case 'heading':
         return this.speech.say(`Facing ${compass8(this.heading)}, ${Math.round(this.heading)} degrees.`, 'high');
-      case 's':
+      case 'speed':
         return this.speech.say(
           this.speed < 0.1 ? 'Stopped.' : `${fmtSpeed(this.speed, u)}.`,
           'high',
         );
-      case 'l':
-        return c.shift ? void this.toggleLive() : this.speech.say(this.locationText(), 'high');
-      case 'n': {
+      case 'toggleLive':
+        return void this.toggleLive();
+      case 'location':
+        return this.speech.say(this.locationText(), 'high');
+      case 'nextIntersection':
+      case 'prevIntersection': {
+        const back = action === 'prevIntersection';
         // pressed twice quickly: move there
         const now = performance.now();
-        const double = now - this.lastNPress < 400 && this.lastNShift === c.shift;
+        const double = now - this.lastNPress < 400 && this.lastNShift === back;
         this.lastNPress = double ? -Infinity : now; // a third quick press starts over
-        this.lastNShift = c.shift;
-        if (double) return this.jump(c.shift ? -1 : 1);
-        return c.shift ? this.previousIntersection() : this.nextIntersection();
+        this.lastNShift = back;
+        if (double) return this.jump(back ? -1 : 1);
+        return back ? this.previousIntersection() : this.nextIntersection();
       }
-      case '.':
+      case 'stepForward':
         return this.stepIntersection(1);
-      case ',':
-        if (c.ctrl) return this.onMenu?.('settings');
+      case 'settings':
+        return this.onMenu?.('settings');
+      case 'stepBack':
         return this.stepIntersection(-1);
-      case 'b':
-        if (c.shift) {
-          this.settings.proximityBeeps = !this.settings.proximityBeeps;
-          saveSettings(this.settings);
-          return this.speech.say(`Intersection beeps ${this.settings.proximityBeeps ? 'on' : 'off'}.`, 'high');
-        }
+      case 'proximityBeeps':
+        this.settings.proximityBeeps = !this.settings.proximityBeeps;
+        saveSettings(this.settings);
+        return this.speech.say(`Intersection beeps ${this.settings.proximityBeeps ? 'on' : 'off'}.`, 'high');
+      case 'beacon':
         this.settings.beaconSound = !this.settings.beaconSound;
         saveSettings(this.settings);
         return this.speech.say(`Beacon sound ${this.settings.beaconSound ? 'on' : 'off'}.`, 'high');
-      case 't':
+      case 'turnByTurn':
         return this.toggleTurnByTurn();
-      case 'i':
+      case 'instructions':
         return this.instructions();
-      case 'w': {
-        if (!c.shift) return this.whatsAround();
+      case 'whatsAround':
+        return this.whatsAround();
+      case 'conditions': {
         const at = this.position;
         if (!at) return;
         this.speech.say('Checking conditions.', 'low');
         void conditionsReport(at, this.settings.units).then((t) => this.speech.say(t, 'high'));
         return;
       }
-      case ' ':
+      case 'sonar':
         return this.sonar();
-      case 'Tab':
-        return this.browsePlaces(c.shift ? -1 : 1);
-      case 'Enter':
+      case 'nextPlace':
+        return this.browsePlaces(1);
+      case 'prevPlace':
+        return this.browsePlaces(-1);
+      case 'setDestination':
         return this.setDestination();
-      case 'g':
-        return c.shift ? this.clearDestination() : this.destinationInfo();
-      case 'Backspace':
+      case 'destinationInfo':
+        return this.destinationInfo();
+      case 'clearDestination':
         return this.clearDestination();
-      case 'c':
+      case 'filter':
         return this.cycleFilter();
-      case 'v':
-        if (c.shift) return this.deleteNote();
+      case 'note':
         return this.onNote?.();
-      case 'z':
+      case 'deleteNote':
+        return this.deleteNote();
+      case 'osmNote':
+        return this.onOsmNote?.(this.proj.toLatLon(this.x, this.y));
+      case 'share':
         return void this.shareLink();
-      case 'u':
+      case 'tripSummary':
         return this.tripSummary();
-      case 'e':
+      case 'whereAmI':
         return void this.whereAmI();
-      case 'o':
+      case 'preview':
         return this.routePreview();
-      case 'x':
+      case 'transit':
         return this.nearestTransit();
-      case 'y':
+      case 'saveFavorite':
         return this.saveFavorite();
-      case 'r':
+      case 'align':
         return this.alignToRoad();
-      case 'f':
+      case 'search':
         this.onMenu?.('search');
         return;
-      case 'j':
-        if (c.ctrl) this.onJump?.();
+      case 'jump':
+        this.onJump?.();
         return;
-      case 'q':
-        return c.shift ? this.onSaveRoute?.() : this.onRoutes?.();
-      case 'd': {
-        if (c.ctrl) return this.onNavigate?.();
+      case 'saveRoute':
+        return this.onSaveRoute?.();
+      case 'routes':
+        return this.onRoutes?.();
+      case 'navigate':
+        return this.onNavigate?.();
+      case 'distance': {
         // pressed twice quickly: switch walking routes between shortest and streets only
         const now = performance.now();
         const double = now - this.lastDPress < 400;
         this.lastDPress = double ? -Infinity : now;
         return double ? this.toggleWalkRoute() : this.distanceToGo();
       }
-      case 'm':
+      case 'mapRotation':
         this.settings.headingUpMap = !this.settings.headingUpMap;
         this.map.headingUp = this.settings.headingUpMap;
         saveSettings(this.settings);
         return this.speech.say(this.settings.headingUpMap ? 'Map rotates with heading.' : 'Map north up.', 'high');
-      case 'a':
+      case 'roadAssist':
         this.settings.roadAssist = !this.settings.roadAssist;
         saveSettings(this.settings);
         return this.speech.say(`Road assist ${this.settings.roadAssist ? 'on' : 'off'}.`, 'high');
-      case 'p':
-        if (c.shift) {
-          this.settings.soundProfile = nextProfile(this.settings.soundProfile);
-          this.settings.vehicleProfiles = { ...this.settings.vehicleProfiles, [this.vehicle.id]: this.settings.soundProfile };
-          saveSettings(this.settings);
-          return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
-        }
+      case 'soundProfile':
+        this.settings.soundProfile = nextProfile(this.settings.soundProfile);
+        this.settings.vehicleProfiles = { ...this.settings.vehicleProfiles, [this.vehicle.id]: this.settings.soundProfile };
+        saveSettings(this.settings);
+        return this.speech.say(PROFILE_TEXT[this.settings.soundProfile], 'high');
+      case 'announcePlaces':
         this.settings.announcePlaces = !this.settings.announcePlaces;
         saveSettings(this.settings);
         return this.speech.say(`Place announcements ${this.settings.announcePlaces ? 'on' : 'off'}.`, 'high');
-      case '[':
+      case 'reviewBack':
         return this.speech.review(-1);
-      case ']':
+      case 'reviewNext':
         return this.speech.review(1);
-      case '1':
-      case '2':
-      case '3':
-      case '4':
-        return this.setVehicle((['walker', 'bicycle', 'car', 'helicopter'] as const)[Number(c.key) - 1], true);
-      case 'PageUp':
-      case 'PageDown': {
-        const v = Math.max(0, Math.min(1, this.settings.volume + (c.key === 'PageUp' ? 0.1 : -0.1)));
+      case 'walker':
+      case 'bicycle':
+      case 'car':
+      case 'helicopter':
+        return this.setVehicle(action, true);
+      case 'volumeUp':
+      case 'volumeDown': {
+        const v = Math.max(0, Math.min(1, this.settings.volume + (action === 'volumeUp' ? 0.1 : -0.1)));
         this.settings.volume = Math.round(v * 10) / 10;
         this.audio.setVolume(this.settings.volume);
         saveSettings(this.settings);
@@ -2201,7 +2221,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
-        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. Control D searches for a destination. D says the distance to go, D twice switches walking routes between shortest and streets only, T toggles turn by turn directions, I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
