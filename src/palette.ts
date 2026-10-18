@@ -26,6 +26,7 @@ export const ACTIONS: Action[] = [
   a("What's around", 'W', 'w'),
   a('Weather and daylight', 'Shift W', 'W', true),
   a('Sonar sweep', 'Space', ' '),
+  a('Toggle grid mode', 'F3', 'F3'),
   a('Jump to a place', 'Control J', 'j', false, true),
   a('Save route', 'Shift Q', 'Q', true),
   a('Saved routes', 'Q', 'q'),

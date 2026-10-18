@@ -12,8 +12,8 @@ import type { LatLon } from './geo';
 import { HIGHWAYS, type RawPlace, type RawPlaces, type RawRoads, type RawWay } from './osm';
 
 const TILEJSON = 'https://tiles.openfreemap.org/planet';
-const Z = 14; // the most detailed level, where every road and place is present
-const EXTENT = 4096;
+export const Z = 14; // the most detailed level, where every road and place is present
+export const EXTENT = 4096;
 const HIGHWAY_SET = new Set(HIGHWAYS.split('|'));
 /** how close (in tile units, ~0.4–0.6 m) a road end must be to another road to count as joined */
 const SNAP = 1.6;
@@ -21,7 +21,7 @@ const SNAP = 1.6;
 let tileUrl: Promise<string> | null = null;
 
 /** The current tile URL template (it changes when the map data is updated). */
-function template(signal: AbortSignal): Promise<string> {
+function template(signal?: AbortSignal): Promise<string> {
   tileUrl ??= fetch(TILEJSON, { signal })
     .then((r) => {
       if (!r.ok) throw new Error(`TileJSON ${r.status}`);
@@ -32,8 +32,8 @@ function template(signal: AbortSignal): Promise<string> {
   return tileUrl;
 }
 
-const tileX = (lon: number) => ((lon + 180) / 360) * 2 ** Z;
-const tileY = (lat: number) => {
+export const tileX = (lon: number) => ((lon + 180) / 360) * 2 ** Z;
+export const tileY = (lat: number) => {
   const r = (lat * Math.PI) / 180;
   return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** Z;
 };
@@ -43,6 +43,14 @@ function toLatLon(gx: number, gy: number): LatLon {
   const lon = (gx / n) * 360 - 180;
   const lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * gy) / n))) * 180) / Math.PI;
   return { lat, lon };
+}
+
+/** One tile at zoom Z. */
+export async function fetchTile(tx: number, ty: number, signal?: AbortSignal): Promise<VectorTile> {
+  const url = await template(signal);
+  const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(tx)).replace('{y}', String(ty)), { signal });
+  if (!r.ok) throw new Error(`Tile ${tx},${ty}: ${r.status}`);
+  return new VectorTile(new PbfReader(new Uint8Array(await r.arrayBuffer())));
 }
 
 interface Pt {
@@ -164,7 +172,6 @@ interface RoadLine {
 
 /** Roads and places for the tiles covering a square of `radius` metres around `center`. */
 export async function fetchTileArea(center: LatLon, radius: number, signal: AbortSignal): Promise<{ roads: RawRoads; places: RawPlaces }> {
-  const url = await template(signal);
   const dLat = radius / 110_540;
   const dLon = radius / (111_320 * Math.cos((center.lat * Math.PI) / 180));
   const tx0 = Math.floor(tileX(center.lon - dLon));
@@ -174,12 +181,7 @@ export async function fetchTileArea(center: LatLon, radius: number, signal: Abor
   const jobs: Promise<{ tx: number; ty: number; vt: VectorTile }>[] = [];
   for (let tx = tx0; tx <= tx1; tx++)
     for (let ty = ty0; ty <= ty1; ty++) {
-      jobs.push(
-        fetch(url.replace('{z}', String(Z)).replace('{x}', String(tx)).replace('{y}', String(ty)), { signal }).then(async (r) => {
-          if (!r.ok) throw new Error(`Tile ${tx},${ty}: ${r.status}`);
-          return { tx, ty, vt: new VectorTile(new PbfReader(new Uint8Array(await r.arrayBuffer()))) };
-        }),
-      );
+      jobs.push(fetchTile(tx, ty, signal).then((vt) => ({ tx, ty, vt })));
     }
   const tiles = await Promise.all(jobs);
 
