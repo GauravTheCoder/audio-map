@@ -55,7 +55,7 @@ export const nextProfile = (p: SoundProfile): SoundProfile => PROFILES[(PROFILES
 /** 2 landmark, 1 notable, 0 everyday (cafes, shops, bus stops) */
 export function placeTier(p: Place): number {
   if (p.group === 'culture' || p.group === 'nature' || p.category === 'station' || p.category === 'hospital') return 2;
-  if (p.group === 'health' || (p.group === 'transport' && p.category !== 'bus stop')) return 1;
+  if (p.group === 'health' || (p.group === 'transport' && !['bus stop', 'platform'].includes(p.category))) return 1;
   return 0;
 }
 
