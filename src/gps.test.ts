@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compassHeading, easeAngle, fuse, motionBetween, pickHeading, snapRadius } from './gps';
+import { compassHeading, easeAngle, fuse, motionBase, motionBetween, pickHeading, snapRadius } from './gps';
 
 describe('compassHeading', () => {
   it('uses the iOS compass heading directly', () => {
@@ -16,13 +16,23 @@ describe('compassHeading', () => {
 });
 
 describe('pickHeading', () => {
-  it('prefers the compass', () => {
-    expect(pickHeading(10, 200, 5)).toBe(10);
+  it('follows the way you walk while moving, wherever the phone points', () => {
+    expect(pickHeading(10, 200, 1.4)).toBe(200);
   });
-  it('falls back to the GPS course only when moving', () => {
-    expect(pickHeading(null, 200, 1.5)).toBe(200);
+  it('uses the compass when standing still or without a course', () => {
+    expect(pickHeading(10, 200, 0.3)).toBe(10);
+    expect(pickHeading(10, null, 1.4)).toBe(10);
     expect(pickHeading(null, 200, 0.2)).toBeNull();
     expect(pickHeading(null, null, 5)).toBeNull();
+  });
+});
+
+describe('motionBase', () => {
+  it('measures from a position a few seconds back, so GPS wander does not look like walking', () => {
+    const track = [{ t: 0 }, { t: 1000 }, { t: 2000 }, { t: 3000 }];
+    expect(motionBase(track, 4000)).toEqual({ t: 1000 }); // the newest at least 2.5 s old
+    expect(motionBase(track.slice(2), 4000)).toEqual({ t: 2000 }); // none old enough: the oldest
+    expect(motionBase([], 4000)).toBeNull();
   });
 });
 

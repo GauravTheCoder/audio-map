@@ -430,6 +430,21 @@ dialog#nav label {
 #phone[hidden] {
   display: none;
 }
+/* first screen on a phone: only Begin and Full menu, which unlock sound, speech and location with a tap */
+#phone:not(.welcome) .ph-welcome,
+#phone.welcome > :not(.ph-welcome) {
+  display: none;
+}
+.ph-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: auto 0;
+}
+.ph-welcome button {
+  min-height: 72px;
+  font-size: 1.4rem;
+}
 .ph-dirs {
   width: 100%;
   min-height: 64px;

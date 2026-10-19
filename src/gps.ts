@@ -31,7 +31,7 @@ export const DEFAULT_ACCURACY = 15;
 export type GpsProblem = 'denied' | 'nosignal' | 'unsupported';
 
 /** Below this speed the GPS course is noise, so it is not used for heading. */
-const MIN_COURSE_SPEED = 1;
+const MIN_COURSE_SPEED = 0.8;
 
 export interface OrientationLike {
   webkitCompassHeading?: number;
@@ -46,10 +46,34 @@ export function compassHeading(e: OrientationLike): number | null {
   return null;
 }
 
-/** The compass when there is one; otherwise the GPS course, but only while actually moving. */
+/**
+ * The way you are going: the GPS course while actually moving (the phone may point anywhere, or be
+ * in a pocket), otherwise the compass, the way the phone points.
+ */
 export function pickHeading(compass: number | null, course: number | null, speed: number): number | null {
-  if (compass !== null) return compass;
-  return course !== null && speed >= MIN_COURSE_SPEED ? normDeg(course) : null;
+  if (course !== null && speed >= MIN_COURSE_SPEED) return normDeg(course);
+  return compass;
+}
+
+let compassAsked: Promise<boolean> | null = null;
+/**
+ * Ask for the compass once; later calls get the same answer without asking again. Call it from a
+ * tap or key press first: iOS only shows the prompt inside a user gesture.
+ */
+export function requestCompass(): Promise<boolean> {
+  const DOE = (window as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
+  compassAsked ??= DOE?.requestPermission ? DOE.requestPermission().then((r) => r === 'granted', () => false) : Promise.resolve(true);
+  return compassAsked;
+}
+
+/** Positions this many ms apart (or more) give a steady speed and course at walking pace. */
+const MOTION_SPAN = 2500;
+
+/** Of the recent positions, the one to measure motion from: the newest at least MOTION_SPAN old, else the oldest. */
+export function motionBase<T extends { t: number }>(track: T[], now: number): T | null {
+  let base: T | null = null;
+  for (const p of track) if (now - p.t >= MOTION_SPAN) base = p;
+  return base ?? track[0] ?? null;
 }
 
 /**
@@ -92,7 +116,8 @@ export class LiveGps {
   private watch: number | null = null;
   private lost = false;
   private stopped = false;
-  private prev: { lat: number; lon: number; t: number } | null = null;
+  /** the last few seconds of positions, to work out speed and course when the device does not say */
+  private track: { lat: number; lon: number; t: number }[] = [];
 
   constructor(
     private onFix: (f: GpsFix) => void,
@@ -111,10 +136,8 @@ export class LiveGps {
       this.onProblem('unsupported');
       return false;
     }
-    const DOE = (window as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
     // a refused compass is not fatal: GPS course still works while moving
-    const compassOk = DOE?.requestPermission ? DOE.requestPermission().then((r) => r === 'granted', () => false) : Promise.resolve(true);
-    const granted = await compassOk;
+    const granted = await requestCompass();
     // turned off while the permission prompt was open
     if (this.stopped) return false;
     if (granted) {
@@ -131,8 +154,10 @@ export class LiveGps {
         const here = { lat: c.latitude, lon: c.longitude, t: p.timestamp };
         // some devices report no speed or course; work them out from the last fix
         const course = c.heading === null || Number.isNaN(c.heading) ? null : c.heading;
-        const m = c.speed === null || course === null ? this.prev && motionBetween(this.prev, here) : null;
-        this.prev = here;
+        // measured over a few seconds: fix to fix, GPS wander swamps walking pace
+        const base = motionBase(this.track, here.t);
+        const m = c.speed === null || course === null ? base && motionBetween(base, here) : null;
+        this.track = [...this.track.filter((p) => here.t - p.t <= 6000), here];
         const speed = c.speed !== null && Number.isFinite(c.speed) ? c.speed : (m?.speed ?? 0);
         const heading = course ?? m?.heading ?? null;
         this.onFix({ lat: c.latitude, lon: c.longitude, speed, heading, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null });

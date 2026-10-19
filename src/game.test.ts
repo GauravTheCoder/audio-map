@@ -984,6 +984,66 @@ describe('phone screen', () => {
     expect(game.directionsText()).toMatch(/^In 150 metres, .*turn right onto Elm Street\.$/);
   });
 
+  it('Shift Z saves the planned route as a GPX file', async () => {
+    const saved: { download?: string } = {};
+    vi.stubGlobal('document', { createElement: () => ({ click() {}, set download(v: string) { saved.download = v; } }) });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const { game, said } = setup();
+    game.run('Z', { shift: true });
+    expect(said.at(-1)).toBe('No route to save. Set a destination first.');
+    game.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    await flush();
+    game.run('Z', { shift: true });
+    expect(saved.download).toBe('Elm End.gpx');
+    expect(said.at(-1)).toBe('Route to Elm End saved as a GPX file.');
+    delete (globalThis as { document?: unknown }).document;
+    vi.mocked(URL.createObjectURL).mockRestore();
+    vi.mocked(URL.revokeObjectURL).mockRestore();
+  });
+
+  it('warns about an unlit path ahead only when it is dark', () => {
+    const { g, said } = setup();
+    const start = ll(0, 70);
+    g.world.addPlaces({ places: [], signals: new Set<number>(), unlit: [start] });
+    g.speed = 1.4;
+    g.darkCheckedAt = g.clock;
+    g.dark = false;
+    g.checkHazards();
+    expect(said).toEqual([]);
+    g.dark = true;
+    g.checkHazards();
+    expect(said.at(-1)).toMatch(/^Unlit path ahead, 20 metres/);
+  });
+
+  it('Shift S fetches the map here and at the destination, and says so when it fails', async () => {
+    vi.mocked(fetchTileArea).mockResolvedValue({ roads: rawRoads(), places: { places: [], signals: new Set<number>() } });
+    vi.mocked(fetchPlaces).mockResolvedValue({ places: [], signals: new Set<number>() });
+    const { game, said, g } = setup();
+    g.dest = { name: 'Elm End', x: 150, y: 200 };
+    game.run('S', { shift: true });
+    await flush();
+    expect(vi.mocked(fetchRoads)).toHaveBeenCalledTimes(2);
+    expect(said.at(-1)).toBe('Saved the map around here and the destination for offline use.');
+    vi.mocked(fetchRoads).mockRejectedValue(new Error('offline'));
+    game.run('S', { shift: true });
+    await flush();
+    expect(said.at(-1)).toBe('Could not save the area. Check your connection.');
+  });
+
+  it('Shift O says the nearest of each kind of facility', () => {
+    const { game, said, g } = setup();
+    game.run('O', { shift: true });
+    expect(said.at(-1)).toBe('No toilets, benches or other facilities on the loaded map.');
+    g.world.addPlaces({
+      places: [],
+      signals: new Set<number>(),
+      facilities: [{ ...ll(0, 90), kind: 'bench' }, { ...ll(0, 300), kind: 'bench' }, { ...ll(0, 250), kind: 'toilets' }],
+    });
+    game.run('O', { shift: true });
+    expect(said.at(-1)).toBe("Bench, 40 metres at 12 o'clock. Toilets, 200 metres at 12 o'clock.");
+  });
+
   it('picks units by country until the player chooses: imperial in the US, metric in India', async () => {
     const units: string[] = [];
     vi.mocked(fetchCountry).mockResolvedValueOnce('us').mockResolvedValueOnce('in');
@@ -1015,5 +1075,28 @@ describe('live GPS sound', () => {
     g.liveFix = null;
     g.syncEngine();
     expect(engine).toEqual([true, true, false, true]);
+  });
+});
+
+describe('live GPS walking', () => {
+  it('takes "ahead" from the way you walk, not where the phone points', () => {
+    const { g } = setup();
+    g.heading = 90;
+    g.live = { compass: 90, stop() {} }; // phone pointing east
+    g.liveFix = { lat: 0, lon: 0, speed: 1.3, heading: 0, accuracy: 5 }; // walking north
+    g.gpsEst = { x: 0, y: 60, acc: 5, t: 0 };
+    for (let i = 0; i < 60; i++) g.followGps(1 / 60);
+    expect(Math.abs(((g.heading + 180) % 360) - 180)).toBeLessThan(5);
+    expect(g.speed).toBeCloseTo(1.3);
+  });
+
+  it('uses the compass when standing still', () => {
+    const { g } = setup();
+    g.heading = 0;
+    g.live = { compass: 90, stop() {} };
+    g.liveFix = { lat: 0, lon: 0, speed: 0, heading: null, accuracy: 5 };
+    g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
+    for (let i = 0; i < 120; i++) g.followGps(1 / 60);
+    expect(g.heading).toBeGreaterThan(85);
   });
 });
