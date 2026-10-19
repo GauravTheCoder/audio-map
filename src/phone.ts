@@ -48,6 +48,11 @@ function loadMapShown(): boolean {
   }
 }
 
+/** A phone, not a tablet or touch laptop: a touch screen whose shorter side is at most 600 CSS pixels. */
+export function isPhone(coarsePointer: boolean, shortSide: number): boolean {
+  return coarsePointer && shortSide <= 600;
+}
+
 /** Metres in one unit of distance. */
 const unitM = (u: Units) => (u === 'imperial' ? 0.9144 : 1);
 
@@ -193,9 +198,17 @@ export class Phone {
     }
   }
 
+  /** The first screen on a phone: Begin (which, being a tap, may start sound, speech and location) or the full menu. */
+  welcome() {
+    this.root.hidden = false;
+    this.root.classList.add('welcome');
+    this.el('ph-begin').focus();
+  }
+
   show(mode: 'travel' | 'explore') {
     this.root.hidden = false;
     this.showMap(this.mapShown);
+    this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.setMode(mode, false);
     clearInterval(this.timer);
@@ -206,6 +219,7 @@ export class Phone {
 
   hide() {
     this.root.hidden = true;
+    this.root.classList.remove('welcome');
     clearInterval(this.timer);
   }
 
