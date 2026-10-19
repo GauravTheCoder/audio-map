@@ -1000,3 +1000,20 @@ describe('phone screen', () => {
     expect(g.settings.units).toBe('metric');
   });
 });
+
+describe('nearby list', () => {
+  it('lists places nearest first with distance and which way, filtered by kind', () => {
+    const { game } = setup(); // at (0, 50) facing north; Blue Cafe is at (20, 100)
+    expect(game.nearbyList(null)).toEqual([{ id: 'n1', text: 'Blue Cafe, cafe, 50 metres, ahead right' }]);
+    expect(game.nearbyList('food')).toHaveLength(1);
+    expect(game.nearbyList('shop')).toEqual([]);
+  });
+
+  it('choosing one makes it the destination', () => {
+    const { game, said, g } = setup();
+    expect(game.pickPlace('n1')).toBe(true);
+    expect(g.dest.name).toBe('Blue Cafe');
+    expect(said.join(' ')).toMatch(/Destination Blue Cafe/);
+    expect(game.pickPlace('nope')).toBe(false);
+  });
+});

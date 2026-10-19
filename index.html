@@ -41,6 +41,7 @@
         <button type="button" id="ph-where">Where to?</button>
         <button type="button" id="ph-start" class="primary">Start</button>
         <button type="button" id="ph-here">Where am I</button>
+        <button type="button" id="ph-nearby">Nearby</button>
         <button type="button" id="ph-end">End route</button>
       </div>
       <div id="ph-explore" class="ph-row" hidden>
@@ -59,6 +60,14 @@
       </div>
       <button type="button" id="ph-mode" class="ph-mode"></button>
     </section>
+
+    <dialog id="ph-near" aria-labelledby="ph-near-title">
+      <h2 id="ph-near-title">Nearby</h2>
+      <div class="ph-row" role="group" aria-label="Kind of place" id="ph-near-kinds"></div>
+      <p id="ph-near-status" class="hint" aria-live="polite"></p>
+      <ul id="ph-near-list" class="results" aria-label="Nearby places"></ul>
+      <button type="button" id="ph-near-close">Close</button>
+    </dialog>
 
     <dialog id="menu" aria-labelledby="menu-title">
       <form method="dialog" id="menu-form">

@@ -3108,6 +3108,31 @@ export class Game {
     return { dir: (Math.round(normDeg(heading) / 45) % 8) * 45 };
   }
 
+  /**
+   * Places within `r` metres, nearest first, for the phone's Nearby list: name, kind, how far and
+   * which way ("ahead left"). `group` limits them to one kind.
+   */
+  nearbyList(group: PlaceGroup | null, r = 500, max = 20): { id: string; text: string }[] {
+    if (!this.world) return [];
+    const u = this.settings.units;
+    return this.world
+      .placesNear(this.x, this.y, r)
+      .filter(({ place }) => !group || place.group === group)
+      .slice(0, max)
+      .map(({ place, d }) => ({
+        id: place.id,
+        text: `${this.placeText(place)}, ${fmtDistance(d, u)}, ${sideWord(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`,
+      }));
+  }
+
+  /** Make a loaded place the destination: its main door, a station's nearest entrance, or the place. */
+  pickPlace(id: string): boolean {
+    const p = this.world?.places.find((q) => q.id === id);
+    if (!p) return false;
+    this.setTarget(this.targetFor(p));
+    return true;
+  }
+
   /** Start live GPS from a tap (iOS asks for the compass only then); nothing if it is on. */
   startLive() {
     if (!this.live) void this.toggleLive();
