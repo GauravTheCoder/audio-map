@@ -231,6 +231,11 @@
           <label><input type="checkbox" id="forgetKey" /> Do not keep the key on this device (paste it again each time you open the app)</label>
           <label for="gemini-key">Gemini API key</label>
           <input type="password" id="gemini-key" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <label for="gemini-model">Gemini model</label>
+          <select id="gemini-model"></select>
+          <div class="actions">
+            <button type="button" id="gemini-models">Load models from Google</button>
+          </div>
           <div class="actions">
             <button type="button" id="gemini-save">Save key</button>
             <button type="button" id="gemini-clear">Remove key</button>

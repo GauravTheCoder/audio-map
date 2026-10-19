@@ -43,6 +43,8 @@ export interface Settings {
   cloudWalk: boolean;
   /** the Gemini key is held only until the page closes, never kept on this device */
   forgetKey: boolean;
+  /** the Gemini model the player chose from the list Google gave; empty until they choose, and never assumed */
+  geminiModel: string;
   soundProfile: SoundProfile;
   soundTheme: SoundTheme;
   customSound: CustomSound;
@@ -79,6 +81,7 @@ const DEFAULTS: Settings = {
   accessibleRoute: false,
   cloudWalk: false,
   forgetKey: false,
+  geminiModel: '',
   soundProfile: 'simple',
   soundTheme: 'classic',
   customSound: { places: 'notable', sideStreets: true, extras: true },

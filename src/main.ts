@@ -27,7 +27,7 @@ import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
 import { SignalWatcher } from './signal';
-import { KeyRejected, askGemini } from './cloudSignal';
+import { KeyRejected, askGemini, listModels, type ModelChoice } from './cloudSignal';
 import { clearKey, forgetStoredKey, loadKey, saveKey } from './geminiKey';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -115,6 +115,29 @@ function bindSettings() {
     keyStatus.textContent = `${msg} ${held}`.trim();
   };
   showKey();
+  const modelBox = $<HTMLSelectElement>('gemini-model');
+  const showModels = (choices: ModelChoice[]) => {
+    const all = settings.geminiModel && !choices.some((c) => c.name === settings.geminiModel) ? [{ name: settings.geminiModel, label: settings.geminiModel.slice(7) }, ...choices] : choices;
+    modelBox.replaceChildren(new Option('Choose a model', '', false, !settings.geminiModel));
+    for (const c of all) modelBox.append(new Option(c.label, c.name, false, c.name === settings.geminiModel));
+  };
+  showModels([]);
+  modelBox.addEventListener('change', () => update({ geminiModel: modelBox.value }));
+  $('gemini-models').addEventListener('click', () => {
+    const key = loadKey();
+    if (!key) return showKey('Save a key first.');
+    keyStatus.textContent = 'Asking Google for the models this key can use…';
+    listModels(key).then(
+      (choices) => {
+        showModels(choices);
+        showKey(choices.length ? `${choices.length} models found. Choose one.` : 'Google listed no usable Gemini models for this key.');
+      },
+      (e: unknown) => {
+        if (e instanceof KeyRejected) clearKey();
+        showKey(e instanceof KeyRejected ? 'Google refused the key, so it was removed.' : 'Could not load the models. Check the connection and try again.');
+      },
+    );
+  });
   $('forgetKey').addEventListener('change', () => {
     if (settings.forgetKey) forgetStoredKey();
     showKey();
@@ -366,7 +389,8 @@ const phone = new Phone($('phone'), () => game, {
       speech.say('Crossing signal watch is off.', 'high');
       return false;
     }
-    const key = settings.cloudWalk ? loadKey() : null;
+    const model = settings.geminiModel;
+    const key = settings.cloudWalk && model ? loadKey() : null;
     let refused = false;
     const w = new SignalWatcher({
       video: $('ph-signal-video') as HTMLVideoElement,
@@ -374,7 +398,7 @@ const phone = new Phone($('phone'), () => game, {
       cloud: key
         ? async (jpeg) => {
             try {
-              return await askGemini(key, jpeg);
+              return await askGemini(key, model, jpeg);
             } catch (e) {
               if (e instanceof KeyRejected && !refused) {
                 refused = true;
@@ -398,7 +422,7 @@ const phone = new Phone($('phone'), () => game, {
     const walk = key
       ? 'Walk signals come from Gemini, which can be wrong; photos are sent to Google. Fast beeps mean walk.'
       : settings.cloudWalk
-        ? 'Gemini is on in settings but no key is saved, so there are no Walk signals.'
+        ? 'Gemini is on in settings but no key is saved or no model is chosen, so there are no Walk signals.'
         : 'There are no Walk signals.';
     speech.say(`Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. ${walk} Silence does not mean walk. Always check the street yourself.`, 'high');
     return true;

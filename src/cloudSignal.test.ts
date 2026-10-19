@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { KeyRejected, askGemini, parseAnswer } from './cloudSignal';
+import { KeyRejected, askGemini, isModel, listModels, parseAnswer, parseModels } from './cloudSignal';
 import { cleanKey } from './geminiKey';
 import { validate } from './backup';
 
 const reply = (signal: string) => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ signal }) }] } }] });
 const KEY = 'SECRETKEY-1234567890abcdef';
+const MODEL = 'models/gemini-test-flash';
 
 describe('parseAnswer', () => {
   it('maps the four answers', () => {
@@ -28,9 +29,10 @@ describe('askGemini', () => {
 
   it('sends the key only in a header, to Google, with no credentials or referrer', async () => {
     const f = stub(200, reply('walk'));
-    expect(await askGemini(KEY, 'AAAA')).toBe('walk');
+    expect(await askGemini(KEY, MODEL, 'AAAA')).toBe('walk');
     const [url, init] = f.mock.calls[0];
     expect(url).toMatch(/^https:\/\/generativelanguage\.googleapis\.com\//);
+    expect(url).toContain(`/${MODEL}:generateContent`);
     expect(url).not.toContain('SECRETKEY');
     expect(init.headers['x-goog-api-key']).toBe(KEY);
     expect(init.body).not.toContain('SECRETKEY');
@@ -38,15 +40,15 @@ describe('askGemini', () => {
   });
   it('reports a refused key without echoing it', async () => {
     stub(403, {});
-    const err = await askGemini(KEY, 'AAAA').catch((e: unknown) => e);
+    const err = await askGemini(KEY, MODEL, 'AAAA').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(KeyRejected);
     expect((err as Error).message).not.toContain('SECRETKEY');
   });
   it('treats a 400 invalid-key reply as a refused key, and other errors as plain failures', async () => {
     stub(400, { error: { details: [{ reason: 'API_KEY_INVALID' }] } });
-    await expect(askGemini(KEY, 'A')).rejects.toBeInstanceOf(KeyRejected);
+    await expect(askGemini(KEY, MODEL, 'A')).rejects.toBeInstanceOf(KeyRejected);
     stub(429, {});
-    const err = await askGemini(KEY, 'A').catch((e: unknown) => e);
+    const err = await askGemini(KEY, MODEL, 'A').catch((e: unknown) => e);
     expect(err).not.toBeInstanceOf(KeyRejected);
   });
 });
@@ -59,5 +61,50 @@ describe('the key store', () => {
   it('is not carried by backups: validate drops a geminiKey field', () => {
     const out = validate({ app: 'audio-map', settings: { geminiKey: 'AIzaSyA-1234567890_abcdefghijklmnopqrs', cloudWalk: true } });
     expect(JSON.stringify(out)).not.toContain('AIza');
+  });
+});
+
+describe('models', () => {
+  const list = {
+    models: [
+      { name: 'models/gemini-b', displayName: 'Gemini B', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/gemini-a', displayName: 'Gemini A', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+      { name: 'models/gemini-embed', supportedGenerationMethods: ['embedContent'] },
+      { name: 'models/text-embedding-004', supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/../evil', supportedGenerationMethods: ['generateContent'] },
+      null,
+    ],
+  };
+
+  it('lists only Gemini models that can generate, sorted, and ignores junk', () => {
+    expect(parseModels(list).map((m) => m.name)).toEqual(['models/gemini-a', 'models/gemini-b']);
+    expect(parseModels(list)[0].label).toBe('Gemini A (gemini-a)');
+    expect(parseModels(null)).toEqual([]);
+    expect(parseModels({ models: 'x' })).toEqual([]);
+  });
+  it('accepts only plain model names, since the name goes into a URL path', () => {
+    expect(isModel('models/gemini-2.5-flash')).toBe(true);
+    for (const bad of ['', 'gemini-2.5-flash', 'models/', 'models/a/b', 'models/a?key=x', 'models/..', 'https://evil.test/models/x', 5, null]) expect(isModel(bad)).toBe(false);
+  });
+  it('refuses to call a model that was not chosen', async () => {
+    const f = vi.fn();
+    vi.stubGlobal('fetch', f);
+    await expect(askGemini(KEY, '', 'A')).rejects.toThrow('no model chosen');
+    expect(f).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+  it('asks Google for the list with the key in a header only', async () => {
+    const f = vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => list });
+    vi.stubGlobal('fetch', f);
+    expect(await listModels(KEY)).toHaveLength(2);
+    const [url, init] = f.mock.calls[0];
+    expect(url).toMatch(/^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models/);
+    expect(url).not.toContain('SECRETKEY');
+    expect(init.headers['x-goog-api-key']).toBe(KEY);
+    vi.unstubAllGlobals();
+  });
+  it('is not carried by backups unless it is a plain model name', () => {
+    expect(validate({ app: 'audio-map', settings: { geminiModel: 'models/gemini-a' } }).settings.geminiModel).toBe('models/gemini-a');
+    expect(validate({ app: 'audio-map', settings: { geminiModel: 'https://evil.test' } }).settings.geminiModel).toBeUndefined();
   });
 });
