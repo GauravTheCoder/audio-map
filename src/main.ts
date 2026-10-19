@@ -110,6 +110,7 @@ function bindSettings() {
   for (const el of [places, side, extras]) el.addEventListener('change', custom);
   const keyField = $<HTMLInputElement>('gemini-key');
   const keyStatus = $('gemini-status');
+  const box = $('gemini-box');
   const showKey = (msg = '') => {
     const held = loadKey() ? (settings.forgetKey ? 'A key is held until you close this page.' : 'A key is saved on this device.') : 'No key is saved.';
     keyStatus.textContent = `${msg} ${held}`.trim();
@@ -123,40 +124,78 @@ function bindSettings() {
   };
   showModels([]);
   modelBox.addEventListener('change', () => update({ geminiModel: modelBox.value }));
-  $('gemini-models').addEventListener('click', () => {
+
+  const swatch = (colour: string, fill: string): Swatch => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d')!;
+    g.fillStyle = fill;
+    g.fillRect(0, 0, 64, 64);
+    return { png: c.toDataURL('image/png').split(',')[1], colour };
+  };
+  // one status line is announced by the screen reader (role=status), so progress is reported sparingly, not per model
+  let busy = false;
+  const findModels = async () => {
     const key = loadKey();
     if (!key) return showKey('Save a key first.');
-    keyStatus.textContent = 'Asking Google for the models this key can use…';
-    const swatch = (colour: string, fill: string): Swatch => {
-      const c = document.createElement('canvas');
-      c.width = c.height = 64;
-      const g = c.getContext('2d')!;
-      g.fillStyle = fill;
-      g.fillRect(0, 0, 64, 64);
-      return { png: c.toDataURL('image/png').split(',')[1], colour };
-    };
-    listModels(key)
-      .then((choices) => findImageModels(key, choices, [swatch('red', '#e02020'), swatch('green', '#20c040')], (d, n) => (keyStatus.textContent = `Testing which models can read pictures: ${d} of ${n}…`)))
-      .then(
-        ({ ok, untested }) => {
-          showModels(ok);
-          const skipped = untested ? ` ${untested} could not be tested, for example because of a rate limit; try again later.` : '';
-          showKey(ok.length ? `${ok.length} models can read pictures. Choose one.${skipped}` : `No model could be shown to read pictures.${skipped}`);
-        },
-        (e: unknown) => {
-          if (e instanceof KeyRejected) clearKey();
-          showKey(e instanceof KeyRejected ? 'Google refused the key, so it was removed.' : 'Could not load the models. Check the connection and try again.');
-        },
-      );
+    if (busy) return;
+    busy = true;
+    box.setAttribute('aria-busy', 'true');
+    keyStatus.textContent = 'Asking Google for the models this key can use.';
+    try {
+      const choices = await listModels(key);
+      keyStatus.textContent = `Testing ${choices.length} models to see which can read pictures. This can take a minute.`;
+      const { ok, untested } = await findImageModels(key, choices, [swatch('red', '#e02020'), swatch('green', '#20c040')], (d, n) => {
+        if (d % 10 === 0 && d < n) keyStatus.textContent = `Tested ${d} of ${n} models.`;
+      });
+      showModels(ok);
+      const skipped = untested ? ` ${untested} could not be tested, for example because of a rate limit; try again later.` : '';
+      showKey(ok.length ? `${ok.length} models can read pictures. Choose one in the model list.${skipped}` : `No model could be shown to read pictures.${skipped}`);
+      if (ok.length) modelBox.focus();
+    } catch (e) {
+      if (e instanceof KeyRejected) clearKey();
+      showKey(e instanceof KeyRejected ? 'Google refused the key, so it was removed.' : 'Could not load the models. Check the connection and try again.');
+    } finally {
+      busy = false;
+      box.removeAttribute('aria-busy');
+    }
+  };
+  const saveTyped = () => {
+    const ok = saveKey(keyField.value, !settings.forgetKey);
+    keyField.value = '';
+    return ok;
+  };
+  const pasteKey = async (quiet = false) => {
+    let text = '';
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      if (!quiet) showKey('The clipboard could not be read. Type or paste the key into the key box, then choose Save the key in the box.');
+      return false;
+    }
+    const ok = saveKey(text, !settings.forgetKey);
+    if (!ok) {
+      if (!quiet) showKey('The clipboard does not hold an API key. Copy the key, then try again.');
+      return false;
+    }
+    const cleared = await navigator.clipboard.writeText('').then(() => true, () => false);
+    showKey(cleared ? 'Key saved from the clipboard, and the clipboard was emptied.' : 'Key saved from the clipboard.');
+    return true;
+  };
+  $('gemini-paste').addEventListener('click', () => void pasteKey());
+  $('gemini-save').addEventListener('click', () => showKey(saveTyped() ? 'Key saved.' : 'That does not look like an API key; paste only the key.'));
+  $('gemini-models').addEventListener('click', () => void findModels());
+  $('gemini-quick').addEventListener('click', async () => {
+    if (busy) return;
+    const fromBox = keyField.value.trim() !== '';
+    if (fromBox ? !saveTyped() : !(await pasteKey(true)) && !loadKey()) {
+      return showKey(fromBox ? 'That does not look like an API key; paste only the key.' : 'No key found in the key box or the clipboard. Copy a key from Google AI Studio, then try again.');
+    }
+    await findModels();
   });
   $('forgetKey').addEventListener('change', () => {
     if (settings.forgetKey) forgetStoredKey();
     showKey();
-  });
-  $('gemini-save').addEventListener('click', () => {
-    const ok = saveKey(keyField.value, !settings.forgetKey);
-    keyField.value = '';
-    showKey(ok ? 'Key saved.' : 'That does not look like an API key; paste only the key.');
   });
   $('gemini-clear').addEventListener('click', () => {
     clearKey();
