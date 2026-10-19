@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Game, corridorSpots, minutesText } from './game';
+import { Game, corridorSpots, crossingAdvice, minutesText, paceScale } from './game';
 import { loadNotes, saveNotes } from './notes';
 import { Projection } from './geo';
 import { loadSettings } from './settings';
@@ -1264,6 +1264,79 @@ describe('live GPS walking', () => {
     g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
     for (let i = 0; i < 120; i++) g.followGps(1 / 60);
     expect(g.heading).toBeGreaterThan(85);
+  });
+});
+
+describe('turn reminder distances', () => {
+  it('paceScale stays 1 when stopped, grows with speed to double, and shrinks to 0.7', () => {
+    expect(paceScale(0, 1.4)).toBe(1);
+    expect(paceScale(1.4, 1.4)).toBe(1);
+    expect(paceScale(2.1, 1.4)).toBeCloseTo(1.5);
+    expect(paceScale(9, 1.4)).toBe(2);
+    expect(paceScale(0.5, 1.4)).toBe(0.7);
+  });
+
+  it('a fast walker hears turns earlier than a slow one', () => {
+    const { g } = setup();
+    g.speed = 0.7;
+    const slow = g.stepThresholds;
+    g.speed = 2.8;
+    const fast = g.stepThresholds;
+    expect(slow[0]).toBeCloseTo(42);
+    expect(fast[0]).toBeCloseTo(120);
+    expect(fast[2]).toBeGreaterThan(slow[2]);
+  });
+});
+
+describe('arrival hint', () => {
+  it('names the nearest entrance and which side it is on', () => {
+    const { g } = setup();
+    const door = ll(15, 50);
+    const rp = { id: 'w1', lat: ll(30, 50).lat, lon: ll(30, 50).lon, tags: { amenity: 'library', name: 'Library' }, entrances: [{ ...door, tags: { entrance: 'main' } }] };
+    g.world.addPlaces({ places: [rp], signals: new Set<number>() });
+    const t = { name: 'Library', x: 30, y: 50, placeId: 'w1' };
+    expect(g.arrivalHint(t)).toBe(' The main entrance is 15 metres on your right.');
+    expect(g.arrivalHint({ name: 'Shop', x: 0, y: 70 })).toBe(' It is 20 metres ahead.');
+    expect(g.arrivalHint({ name: 'Here', x: 0, y: 51 })).toBe('');
+  });
+
+  it('adds the hint to the arrival announcement', () => {
+    const { g, said } = setup();
+    g.dest = { name: 'Shop', x: 2, y: 55 };
+    g.updateDestination();
+    expect(said.at(-1)).toMatch(/^Arrived at Shop\. It is 5 metres ahead right\./);
+  });
+});
+
+describe('recent destinations', () => {
+  it('records each destination set', () => {
+    const { g } = setup();
+    g.setTarget({ name: 'Elm End', x: 150, y: 200 });
+    expect(JSON.parse(memory.get('audio-map-recents')!)[0].name).toBe('Elm End');
+  });
+});
+
+describe('crossing advice', () => {
+  it('says what to wait for from how the crossing is mapped', () => {
+    expect(crossingAdvice('Crossing with signals', ['push button', 'audible signal'])).toBe('At the signal crossing. Press the button. Wait for the audible signal, then check for traffic before crossing.');
+    expect(crossingAdvice('Crossing with signals', [])).toMatch(/No audible signal is mapped here/);
+    expect(crossingAdvice('Crossing with signals', ['flush kerb, no edge to feel'])).toMatch(/flush/);
+    expect(crossingAdvice('Pedestrian crossing', [])).toMatch(/uncontrolled crossing/);
+    expect(crossingAdvice('Steps', [])).toBe('');
+  });
+
+  it('speaks once when a walker stops at a crossing', () => {
+    const { g, said } = setup();
+    const at = ll(0, 52);
+    g.world.addPlaces({ places: [], signals: new Set<number>(), crossings: [{ ...at, text: 'Crossing with signals', extras: ['audible signal'] }] });
+    g.speed = 0;
+    g.checkAtCrossing();
+    g.checkAtCrossing();
+    expect(said).toEqual(['At the signal crossing. Wait for the audible signal, then check for traffic before crossing.']);
+    g.speed = 1.4;
+    g.announcedHazards.clear();
+    g.checkAtCrossing();
+    expect(said).toHaveLength(1);
   });
 });
 

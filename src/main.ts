@@ -5,6 +5,7 @@ import { Game } from './game';
 import type { LatLon } from './geo';
 import { MapView } from './mapview';
 import { loadFavorites, removeFavorite } from './favorites';
+import { loadRecents } from './recents';
 import { geocode, type GeocodeResult } from './osm';
 import { loadSettings, saveSettings, type Settings } from './settings';
 import { initPreview, stopPreview } from './preview';
@@ -296,6 +297,7 @@ const phone = new Phone($('phone'), () => game, {
     return voiceLabel();
   },
   voiceLabel,
+  toggleListen: () => toggleVoice?.() ?? false,
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
     void keepAwake();
@@ -500,7 +502,20 @@ function showFavorites() {
   const list = $<HTMLUListElement>('nav-results');
   list.replaceChildren();
   const favs = loadFavorites();
-  $('nav-status').textContent = favs.length ? `${favs.length} saved places. Choose one, or search.` : 'No saved places yet. Press Y in the explorer to save one.';
+  const recents = loadRecents();
+  $('nav-status').textContent =
+    favs.length || recents.length
+      ? `${recents.length} recent, ${favs.length} saved places. Choose one, or search.`
+      : 'No saved places yet. Press Y in the explorer to save one.';
+  for (const f of recents) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `Recent: ${f.name}, ${game?.describeFromHere(f.lat, f.lon) ?? ''}`;
+    b.addEventListener('click', () => pickDestination(f.name, f.lat, f.lon, 0));
+    li.append(b);
+    list.appendChild(li);
+  }
   for (const f of favs) {
     const li = document.createElement('li');
     const b = document.createElement('button');
@@ -725,7 +740,26 @@ const voiceBtn = $<HTMLButtonElement>('voice-btn');
 const toggleVoice = setupVoice(
   () => game,
   (s) => speech.say(s, 'high'),
-  (on) => voiceBtn.setAttribute('aria-pressed', String(on)),
+  (on) => {
+    voiceBtn.setAttribute('aria-pressed', String(on));
+    $('ph-listen').setAttribute('aria-pressed', String(on));
+  },
+  async (t) => {
+    if (!game) return;
+    if ('last' in t) {
+      const r = loadRecents()[0];
+      if (!r) return speech.say('No last destination yet.', 'high');
+      return game.setTargetLatLon(r.name, r.lat, r.lon, 0);
+    }
+    speech.say(`Searching for ${t.query}.`, 'normal');
+    try {
+      const hit = (await geocode(t.query, game.position ?? undefined))[0];
+      if (hit) game.setTargetLatLon(shortName(hit.name), hit.lat, hit.lon, 0);
+      else speech.say(`No results for ${t.query}.`, 'high');
+    } catch {
+      speech.say('Search failed. Check your connection.', 'high');
+    }
+  },
 );
 if (toggleVoice) {
   voiceBtn.addEventListener('click', toggleVoice);

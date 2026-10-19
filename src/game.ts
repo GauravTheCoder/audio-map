@@ -13,6 +13,7 @@ import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } f
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
 import { addFavorite } from './favorites';
+import { addRecent } from './recents';
 import { DEFAULT_ACCURACY, LiveGps, POOR_ACCURACY, easeAngle, fuse, pickHeading, snapRadius, type Estimate, type GpsFix } from './gps';
 import { loadNotes, saveNotes } from './notes';
 import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type VehicleId } from './settings';
@@ -703,6 +704,7 @@ export class Game {
         this.nextPlaceCheck = this.clock + 0.25;
         this.checkPlaces();
         this.checkHazards();
+        this.checkAtCrossing();
         this.checkNotes();
       }
       this.updateDestination();
@@ -1496,6 +1498,18 @@ export class Game {
     return this.dark;
   }
 
+  /** Standing at a crossing: what to wait for before stepping out, said once. */
+  private checkAtCrossing() {
+    if (!this.settings.announceHazards || this.vehicle.id !== 'walker' || this.speed > 0.5) return;
+    const hit = this.world!.hazardsNear(this.x, this.y, 8).find((n) => crossingAdvice(n.hazard.text, n.hazard.extras ?? []));
+    if (!hit) return;
+    const h = hit.hazard;
+    const key = `at|${Math.round(h.x)},${Math.round(h.y)}`;
+    if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) return;
+    this.announcedHazards.set(key, this.clock);
+    this.speech.say(crossingAdvice(h.text, h.extras ?? []), 'high');
+  }
+
   /** Crossings and steps just ahead, for walkers and cyclists. */
   private checkHazards() {
     if (!this.settings.announceHazards || this.speed < 0.3 || (this.vehicle.id !== 'walker' && this.vehicle.id !== 'bicycle')) return;
@@ -1574,6 +1588,20 @@ export class Game {
     }
   }
 
+  /** On arrival: which way the entrance (or, failing that, the place itself) is. */
+  private arrivalHint(t: Target): string {
+    const place = this.world?.places.find((p) => p.id === t.placeId);
+    const door = place?.entrances
+      ?.map((e) => ({ e, d: dist(this.x, this.y, e.x, e.y) }))
+      .sort((a, b) => a.d - b.d)[0];
+    const to = door ? door.e : t;
+    const d = dist(this.x, this.y, to.x, to.y);
+    const side = sideWord(relAngle(this.heading, bearingTo(this.x, this.y, to.x, to.y)));
+    const u = this.settings.units;
+    if (door) return ` The ${door.e.label ?? (door.e.main ? 'main entrance' : 'nearest entrance')} is ${fmtDistance(d, u)} ${side}.`;
+    return d < 4 ? '' : ` It is ${fmtDistance(d, u)} ${side}.`;
+  }
+
   private get arriveRadius() {
     return this.vehicle.id === 'helicopter' ? 60 : this.vehicle.id === 'car' ? 25 : 12;
   }
@@ -1586,7 +1614,7 @@ export class Game {
       this.buzz('arrival');
       const done = this.trip ? ` Trip: ${this.tripText(this.trip)}. Press U to hear it again.` : '';
       this.lastTrip = this.trip ? `Last trip to ${this.dest.name}: ${this.tripText(this.trip)}.` : '';
-      this.speech.say(`Arrived at ${this.dest.name}.${done}`, 'high');
+      this.speech.say(`Arrived at ${this.dest.name}.${this.arrivalHint(this.dest)}${done}`, 'high');
       this.trip = null;
       this.dest = null;
       this.map.setDestination(null);
@@ -2001,15 +2029,16 @@ export class Game {
     void this.computeRoute(true);
   }
 
-  /** Distances (m) before a manoeuvre at which it is spoken: early, closer, now. */
+  /** Distances (m) before a manoeuvre at which it is spoken: early, closer, now. Faster travel hears them earlier. */
   private get stepThresholds(): [number, number, number] {
+    const s = (ref: number) => paceScale(this.speed, ref);
     switch (this.vehicle.id) {
       case 'walker':
-        return [60, 25, 14];
+        return [60 * s(1.4), 25 * s(1.4), 14 * s(1.4)];
       case 'bicycle':
-        return [150, 50, Math.max(15, this.speed * 2.5)];
+        return [150 * s(5), 50 * s(5), Math.max(15, this.speed * 2.5)];
       default:
-        return [400, 150, Math.max(30, this.speed * 2.5)];
+        return [400 * s(14), 150 * s(14), Math.max(30, this.speed * 2.5)];
     }
   }
 
@@ -3468,6 +3497,7 @@ export class Game {
       return this.speech.say(`You are already at ${t.name}.`, 'high');
     }
     this.dest = t;
+    addRecent({ name: t.name, ...this.proj.toLatLon(t.x, t.y) });
     this.trip = { t0: this.clock, meters: 0, streets: [] };
     this.nextBeacon = 0;
     this.dropCorridor();
@@ -3869,6 +3899,23 @@ const IMPERIAL_COUNTRIES = new Set(['us', 'pr', 'gu', 'vi', 'as', 'mp', 'lr']);
 /** An angle rounded to 5 degrees, for speech. */
 function deg5(a: number): number {
   return Math.round(Math.abs(a) / 5) * 5;
+}
+
+/** How much to stretch the spoken-turn distances: 1 at the usual pace `ref` (m/s), up to double when faster, down to 0.7 when slower. */
+export function paceScale(speed: number, ref: number): number {
+  return speed < 0.3 ? 1 : Math.max(0.7, Math.min(2, speed / ref));
+}
+
+/** What to do at the kerb of a crossing, from how it is mapped; empty for other hazards. Never says traffic has stopped. */
+export function crossingAdvice(text: string, extras: string[]): string {
+  const has = (e: string) => extras.includes(e);
+  if (text === 'Crossing with signals') {
+    const start = has('push button') || has('vibrating button') ? 'Press the button. ' : '';
+    const wait = has('audible signal') ? 'Wait for the audible signal, then check for traffic before crossing.' : 'No audible signal is mapped here. Listen for traffic and check before crossing.';
+    return `At the signal crossing. ${start}${wait}${has('flush kerb, no edge to feel') ? ' The kerb is flush, so there is no edge to feel.' : ''}`;
+  }
+  if (text === 'Pedestrian crossing') return 'At an uncontrolled crossing. Wait until traffic has stopped, and listen before crossing.';
+  return '';
 }
 
 /** Points along a route about `spacing` metres apart, ending at the last point, at most `max` of them. */
