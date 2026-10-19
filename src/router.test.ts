@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planRoute, type RouteOptions } from './router';
+import { addCrossings, maneuverText, planRoute, type Maneuver, type Route, type RouteOptions } from './router';
 import type { GNode, Segment, Way, World } from './world';
 
 const way = (name: string): Way => ({ id: 1, type: 'residential', name, named: true, bridge: false, tunnel: false, oneway: false, onewayReverse: false, roundabout: false });
@@ -51,5 +51,31 @@ describe('planRoute', () => {
   it('returns null when no road is nearby', () => {
     const w = { ...build(), nearestRoad: () => null } as unknown as World;
     expect(planRoute(w, start, { x: 100, y: 100 }, opts)).toBeNull();
+  });
+});
+
+describe('addCrossings', () => {
+  const m = (d: number, kind: Maneuver['kind'], onto: string, ontoNamed: boolean, rel = 90): Maneuver => ({ x: 0, y: d, d, rel, kind, onto, ontoNamed });
+  const route = (): Route => ({
+    points: [],
+    length: 200,
+    partial: false,
+    maneuvers: [m(100, 'turn', 'footpath', false, -90), m(120, 'turn', 'path along Mathews Avenue', false), m(200, 'arrive', '', false)],
+  });
+
+  it('puts a crossing in order and quietens the unnamed step onto the crosswalk just before it', () => {
+    const r = route();
+    addCrossings(r, [{ d: 108, x: 0, y: 108, name: 'Mathews Avenue', via: 'at the signals' }]);
+    expect(r.maneuvers.map((x) => `${x.kind}:${x.d}`)).toEqual(['turn:100', 'cross:108', 'turn:120', 'arrive:200']);
+    expect(r.maneuvers[0].trivial).toBe(true);
+    expect(r.maneuvers[2].trivial).toBeUndefined();
+    expect(maneuverText(r.maneuvers[1], 'Home')).toBe('cross Mathews Avenue, at the signals');
+  });
+
+  it('replaces crossings added before', () => {
+    const r = route();
+    addCrossings(r, [{ d: 108, x: 0, y: 108, name: 'Mathews Avenue' }]);
+    addCrossings(r, [{ d: 150, x: 0, y: 150, name: 'Green Street' }]);
+    expect(r.maneuvers.filter((x) => x.kind === 'cross').map((x) => x.onto)).toEqual(['Green Street']);
   });
 });

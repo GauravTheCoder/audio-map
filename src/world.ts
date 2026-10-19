@@ -428,6 +428,29 @@ export class World {
     return best;
   }
 
+  /**
+   * The named streets (not footpaths) that the line a–b cuts across: where, how far along it (t,
+   * 0..1), and which street. Touching at an end does not count.
+   */
+  streetsCrossed(ax: number, ay: number, bx: number, by: number): { x: number; y: number; t: number; name: string }[] {
+    const out: { x: number; y: number; t: number; name: string }[] = [];
+    const rx = bx - ax;
+    const ry = by - ay;
+    const half = Math.hypot(rx, ry) / 2;
+    for (const s of this.segGrid.query(ax + rx / 2, ay + ry / 2, half + 1)) {
+      if (!s.way.named || MINOR.has(s.way.type) || s.way.type === 'service') continue; // not paths, driveways or car parks
+      const sx = s.bx - s.ax;
+      const sy = s.by - s.ay;
+      const den = rx * sy - ry * sx;
+      if (Math.abs(den) < 1e-9) continue; // parallel: walking along it, not across
+      const t = ((s.ax - ax) * sy - (s.ay - ay) * sx) / den;
+      const u = ((s.ax - ax) * ry - (s.ay - ay) * rx) / den;
+      if (t <= 0.001 || t >= 0.999 || u < 0 || u > 1) continue;
+      out.push({ x: ax + t * rx, y: ay + t * ry, t, name: s.way.name });
+    }
+    return out.sort((a, b) => a.t - b.t);
+  }
+
   nodesNear(x: number, y: number, r: number): GNode[] {
     const out: GNode[] = [];
     for (const n of this.nodeGrid.query(x, y, r)) if (dist(x, y, n.x, n.y) <= r) out.push(n);
