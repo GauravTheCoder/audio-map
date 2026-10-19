@@ -26,6 +26,7 @@ import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
+import { SignalWatcher } from './signal';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -301,6 +302,12 @@ function applyShake() {
     if (b) game?.run(b.key, b);
   });
 }
+let signal: SignalWatcher | null = null;
+const SIGNAL_SPEECH = { walk: 'Walk signal.', dontWalk: "Don't walk signal.", none: 'Signal lost.' };
+function stopSignal() {
+  signal?.stop();
+  signal = null;
+}
 const shakeLabel = () => `Shake for address: ${settings.shake ? 'on' : 'off'}`;
 const voiceLabel = () => (settings.speechMode === 'voice' ? 'Speech: built-in voice' : 'Speech: screen reader');
 const phone = new Phone($('phone'), () => game, {
@@ -329,6 +336,27 @@ const phone = new Phone($('phone'), () => game, {
     applyShake();
     speech.say(settings.shake ? 'Shake the phone to hear where you are.' : 'Shake is off.', 'high');
     return shakeLabel();
+  },
+  toggleSignal: async () => {
+    if (signal) {
+      stopSignal();
+      speech.say('Crossing signal watch is off.', 'high');
+      return false;
+    }
+    const w = new SignalWatcher({
+      video: $('ph-signal-video') as HTMLVideoElement,
+      onChange: (s) => speech.say(SIGNAL_SPEECH[s], 'high'),
+    });
+    try {
+      await w.start();
+    } catch {
+      w.stop();
+      speech.say('The camera could not be opened, so the signal watch is off. It can be allowed in the browser settings for this site.', 'high');
+      return false;
+    }
+    signal = w;
+    speech.say('Point the back camera at the crossing signal. This is an aid only: fast beeps mean walk, slow beeps mean do not walk. Always check the street yourself.', 'high');
+    return true;
   },
   guide: () => {
     if (!settings.turnByTurn || !settings.beaconSound) update({ turnByTurn: true, beaconSound: true });
@@ -379,6 +407,8 @@ function leavePhone() {
   void wakeLock?.release().catch(() => {});
   wakeLock = null;
   stopBackground();
+  stopSignal();
+  $('ph-signal').setAttribute('aria-pressed', 'false');
   applyShake();
 }
 
