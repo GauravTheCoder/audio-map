@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classify } from './signal';
+import { classify, pick } from './signal';
 
 const W = 20;
 const inCentre = (p: number) => {
@@ -38,4 +38,14 @@ describe('classify', () => {
   it('is unsure when red and green both show', () => {
     expect(classify(frame([240, 30, 20], 8, [[20, 230, 90], 8]), W)).toBe('unsure');
   });
+});
+
+describe('pick', () => {
+  const walk = { state: 'walk' as const, at: 10_000 };
+  it('takes a fresh recogniser answer when the local check sees nothing', () => expect(pick('none', walk, 11_000)).toBe('walk'));
+  it('lets a local dont walk or unsure beat a recogniser walk', () => {
+    expect(pick('dontWalk', walk, 11_000)).toBe('dontWalk');
+    expect(pick('unsure', walk, 11_000)).toBe('unsure');
+  });
+  it('drops a stale recogniser answer', () => expect(pick('none', walk, 13_000)).toBe('none'));
 });
