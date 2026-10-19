@@ -279,7 +279,7 @@ export class AudioEngine {
         this.tone(880, { when: t + 0.2, dur: 0.07, dest, type: 'square', level: 0.3 });
         break;
       case 'Unlit path': // slow falling tone
-        this.tone(520, { when: t, dur: 0.5, dest, glideTo: 260, type: 'sine', level: 0.4 });
+        this.tone(800, { when: t, dur: 0.5, dest, glideTo: 480, type: 'sine', level: 0.5 });
         break;
       default: // pedestrian crossing: urgent two-pulse
         this.tone(880, { when: t, dur: 0.07, dest, type: 'square', level: 0.3 });
