@@ -10,6 +10,8 @@ export interface SignalOptions {
   video: HTMLVideoElement;
   /** called when the confirmed state changes */
   onChange?: (state: SignalState) => void;
+  /** frames are looked at only while this returns true, e.g. at a mapped signal crossing; any other frame reads as no signal */
+  gate?: () => boolean;
   /** frames analysed per second */
   fps?: number;
   /** lit pixels, as a fraction of the frame, needed before a colour counts as a signal */
@@ -45,7 +47,7 @@ export function classify(rgba: Uint8ClampedArray, minFraction = 0.004): SignalSt
 }
 
 export class SignalWatcher {
-  private readonly o: Required<Omit<SignalOptions, 'onChange'>> & Pick<SignalOptions, 'onChange'>;
+  private readonly o: Required<Omit<SignalOptions, 'onChange' | 'gate'>> & Pick<SignalOptions, 'onChange' | 'gate'>;
   private readonly canvas = document.createElement('canvas');
   private stream: MediaStream | null = null;
   private audio: AudioContext | null = null;
@@ -94,8 +96,11 @@ export class SignalWatcher {
     if (video.readyState < 2) return;
     const ctx = this.canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;
-    ctx.drawImage(video, 0, 0, SIZE.w, SIZE.h);
-    const seen = classify(ctx.getImageData(0, 0, SIZE.w, SIZE.h).data, this.o.minFraction);
+    let seen: SignalState = 'none';
+    if (this.o.gate?.() !== false) {
+      ctx.drawImage(video, 0, 0, SIZE.w, SIZE.h);
+      seen = classify(ctx.getImageData(0, 0, SIZE.w, SIZE.h).data, this.o.minFraction);
+    }
     // a signal needs a few frames in a row to appear, and a longer gap to go away: lamps flicker and cars pass
     const need = seen === 'none' ? LOST_FRAMES : this.o.confirmFrames;
     this.run = seen === this.candidate ? this.run + 1 : 1;

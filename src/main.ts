@@ -345,6 +345,7 @@ const phone = new Phone($('phone'), () => game, {
     }
     const w = new SignalWatcher({
       video: $('ph-signal-video') as HTMLVideoElement,
+      gate: () => game?.atSignalCrossing() ?? false,
       onChange: (s) => speech.say(SIGNAL_SPEECH[s], 'high'),
     });
     try {
@@ -355,7 +356,7 @@ const phone = new Phone($('phone'), () => game, {
       return false;
     }
     signal = w;
-    speech.say('Point the back camera at the crossing signal. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. Silence does not mean walk. Always check the street yourself.', 'high');
+    speech.say('Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. Silence does not mean walk. Always check the street yourself.', 'high');
     return true;
   },
   guide: () => {
