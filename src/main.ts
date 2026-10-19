@@ -19,6 +19,7 @@ import { setupTouch } from './touch';
 import { setupVoice } from './voice';
 import { postOsmNote } from './osmnotes';
 import { Phone, isPhone } from './phone';
+import { requestCompass } from './gps';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -303,6 +304,8 @@ const phone = new Phone($('phone'), () => game, {
 function startPhone() {
   rememberPhone(true);
   stopPreview(speech);
+  void requestCompass(); // from this tap: iOS asks for the compass only in a user gesture
+  if (settings.vehicle !== 'walker') update({ vehicle: 'walker' }); // live GPS on a phone means walking
   const g = ensureGame();
   g.touch = true;
   if (menu.open) menu.close();
@@ -320,6 +323,8 @@ function startPhone() {
       const here = { name: 'Your location', lat: pos.coords.latitude, lon: pos.coords.longitude };
       select(here, false);
       void g.start(here, 'your location');
+      // follow you from now on, destination or not: intersections, crossings and places as you walk
+      g.startLive();
     },
     () => explore('Could not get your location; location permission may be off.'),
     { enableHighAccuracy: true, timeout: 15000 },

@@ -2567,7 +2567,7 @@ export class Game {
     this.live = live;
     const gridOff = !!this.grid;
     this.exitGrid();
-    this.speech.say(`${gridOff ? 'Grid mode off. ' : ''}Live GPS on. Waiting for your location. The keyboard works until it arrives.`, 'high');
+    this.speech.say(`${gridOff ? 'Grid mode off. ' : ''}Live GPS on. Waiting for your location.${this.touch ? '' : ' The keyboard works until it arrives.'}`, 'high');
     await live.start();
   }
 
