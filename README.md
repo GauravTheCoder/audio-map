@@ -39,3 +39,7 @@ On a phone, **Phone mode** (top of the start menu) gives a touch map that works 
 Press **F3** for grid mode: north is up, the arrow keys step across the map, and each kind of ground (road, building, park, water, land use) has its own sound. Areas come from the same vector tiles (`src/areas.ts`).
 
 Press **F1** in the explorer for spoken help. The full key list is in the menu (**Escape**).
+
+## Contributing
+
+Pull request titles follow [Conventional Commits](https://www.conventionalcommits.org): `type(scope): description`, for example `feat(phone): add a nearby list` or `fix(grid): stop naming areas after bus stops`. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`; the scope is optional (`grid`, `phone`, `walk`, `gps`, `transit`, `audio`, `nav` are in use). A check on every pull request enforces it.
