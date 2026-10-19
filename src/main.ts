@@ -27,6 +27,8 @@ import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
 import { SignalWatcher } from './signal';
+import { KeyRejected, askGemini } from './cloudSignal';
+import { clearKey, loadKey, saveKey } from './geminiKey';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -81,7 +83,7 @@ function bindSettings() {
       });
     }
   }
-  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute'] as const) {
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute', 'cloudWalk'] as const) {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
@@ -106,6 +108,20 @@ function bindSettings() {
   extras.checked = settings.customSound.extras;
   const custom = () => update({ customSound: { places: places.value as Settings['customSound']['places'], sideStreets: side.checked, extras: extras.checked } });
   for (const el of [places, side, extras]) el.addEventListener('change', custom);
+  const keyField = $<HTMLInputElement>('gemini-key');
+  const keyStatus = $('gemini-status');
+  const showKey = (msg = '') => (keyStatus.textContent = `${msg} ${loadKey() ? 'A key is saved on this device.' : 'No key is saved.'}`.trim());
+  showKey();
+  $('gemini-save').addEventListener('click', () => {
+    const ok = saveKey(keyField.value);
+    keyField.value = '';
+    showKey(ok ? 'Key saved.' : 'That does not look like an API key; paste only the key.');
+  });
+  $('gemini-clear').addEventListener('click', () => {
+    clearKey();
+    keyField.value = '';
+    showKey('Key removed.');
+  });
   const units = $<HTMLSelectElement>('units');
   units.value = settings.units;
   units.addEventListener('change', () => update({ units: units.value as Settings['units'], unitsChosen: true }));
@@ -343,9 +359,25 @@ const phone = new Phone($('phone'), () => game, {
       speech.say('Crossing signal watch is off.', 'high');
       return false;
     }
+    const key = settings.cloudWalk ? loadKey() : null;
+    let refused = false;
     const w = new SignalWatcher({
       video: $('ph-signal-video') as HTMLVideoElement,
       gate: () => game?.atSignalCrossing() ?? false,
+      cloud: key
+        ? async (jpeg) => {
+            try {
+              return await askGemini(key, jpeg);
+            } catch (e) {
+              if (e instanceof KeyRejected && !refused) {
+                refused = true;
+                clearKey();
+                speech.say('Google refused the Gemini key, so it was removed and Walk signals are off.', 'high');
+              }
+              return 'none';
+            }
+          }
+        : undefined,
       onChange: (s) => speech.say(SIGNAL_SPEECH[s], 'high'),
     });
     try {
@@ -356,7 +388,12 @@ const phone = new Phone($('phone'), () => game, {
       return false;
     }
     signal = w;
-    speech.say('Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. Silence does not mean walk. Always check the street yourself.', 'high');
+    const walk = key
+      ? 'Walk signals come from Gemini, which can be wrong; photos are sent to Google. Fast beeps mean walk.'
+      : settings.cloudWalk
+        ? 'Gemini is on in settings but no key is saved, so there are no Walk signals.'
+        : 'There are no Walk signals.';
+    speech.say(`Point the back camera at the crossing signal. It listens only within about 15 metres of a mapped signal crossing. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. ${walk} Silence does not mean walk. Always check the street yourself.`, 'high');
     return true;
   },
   guide: () => {

@@ -216,6 +216,25 @@
           <label><input type="checkbox" data-group="other" /> Other</label>
         </fieldset>
 
+        <fieldset>
+          <legend>Walk signal (Gemini)</legend>
+          <p class="hint">
+            Optional. On a phone, the crossing signal watch can ask Google's Gemini to recognise a Walk signal, using your own Gemini API key.
+            While it is on, and only within about 15 metres of a mapped signal crossing, a photo from the back camera is sent to Google about once
+            a second. Photos are not stored by this app. The free Gemini tier may let Google use what you send to improve its products, so a paid key is
+            more private. Create the key in Google AI Studio and limit it to the Gemini API. The key stays on this device, is sent only to Google, and
+            is never included in Export my data. Gemini can be wrong: always check the street yourself.
+          </p>
+          <label><input type="checkbox" id="cloudWalk" /> Use Gemini to recognise Walk signals (sends camera photos to Google)</label>
+          <label for="gemini-key">Gemini API key</label>
+          <input type="password" id="gemini-key" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <div class="actions">
+            <button type="button" id="gemini-save">Save key</button>
+            <button type="button" id="gemini-clear">Remove key</button>
+          </div>
+          <p id="gemini-status" class="hint" aria-live="polite"></p>
+        </fieldset>
+
         <div class="actions">
           <button type="button" id="start-btn" class="primary">Start</button>
           <button type="button" id="resume-btn" hidden>Resume</button>
