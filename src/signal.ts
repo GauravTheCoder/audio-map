@@ -1,4 +1,5 @@
 // Watches the rear camera for a pedestrian signal and beeps and buzzes for it: fast for Walk, slow for Don't Walk.
+// iOS Safari has no vibrate(); there a hidden <input switch> is toggled instead, which makes iOS 17.4+ tick the Taptic Engine.
 // ponytail: counts saturated bright green and red pixels only. A white (US) walk figure looks like any white
 // glare, so it is not detected; add a shape or model check (TensorFlow.js) if that is needed.
 
@@ -53,6 +54,7 @@ export class SignalWatcher {
   private readonly canvas = document.createElement('canvas');
   private stream: MediaStream | null = null;
   private audio: AudioContext | null = null;
+  private tap: HTMLLabelElement | null = null;
   private scan: ReturnType<typeof setInterval> | undefined;
   private alert: ReturnType<typeof setInterval> | undefined;
   private state: SignalState = 'none';
@@ -78,6 +80,16 @@ export class SignalWatcher {
     this.o.video.setAttribute('playsinline', '');
     await this.o.video.play();
     this.audio = new AudioContext();
+    if (typeof navigator.vibrate !== 'function') {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.setAttribute('switch', '');
+      this.tap = document.createElement('label');
+      this.tap.setAttribute('aria-hidden', 'true');
+      this.tap.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:0;top:0';
+      this.tap.append(input);
+      document.body.append(this.tap);
+    }
     this.scan = setInterval(() => this.frame(), 1000 / this.o.fps);
   }
 
@@ -91,6 +103,8 @@ export class SignalWatcher {
     this.o.video.srcObject = null;
     void this.audio?.close();
     this.audio = null;
+    this.tap?.remove();
+    this.tap = null;
   }
 
   private frame(): void {
@@ -117,12 +131,17 @@ export class SignalWatcher {
       const walk = next === 'walk';
       const tick = () => {
         this.beep(walk ? 1000 : 400);
-        if (walk) navigator.vibrate?.(300); // re-issued every tick, so it reads as one continuous buzz
+        if (walk) this.buzz(); // re-issued every tick, so it reads as one continuous buzz
       };
       tick();
       this.alert = setInterval(tick, walk ? this.o.walkBeepMs : this.o.dontWalkBeepMs);
     }
     this.o.onChange?.(next);
+  }
+
+  private buzz(): void {
+    if (navigator.vibrate) navigator.vibrate(300);
+    else this.tap?.click(); // ponytail: iOS may only allow this soon after a tap; no fallback if it refuses
   }
 
   private beep(hz: number): void {
