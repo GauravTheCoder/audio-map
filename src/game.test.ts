@@ -1000,3 +1000,26 @@ describe('phone screen', () => {
     expect(g.settings.units).toBe('metric');
   });
 });
+
+describe('live GPS walking', () => {
+  it('takes "ahead" from the way you walk, not where the phone points', () => {
+    const { g } = setup();
+    g.heading = 90;
+    g.live = { compass: 90, stop() {} }; // phone pointing east
+    g.liveFix = { lat: 0, lon: 0, speed: 1.3, heading: 0, accuracy: 5 }; // walking north
+    g.gpsEst = { x: 0, y: 60, acc: 5, t: 0 };
+    for (let i = 0; i < 60; i++) g.followGps(1 / 60);
+    expect(Math.abs(((g.heading + 180) % 360) - 180)).toBeLessThan(5);
+    expect(g.speed).toBeCloseTo(1.3);
+  });
+
+  it('uses the compass when standing still', () => {
+    const { g } = setup();
+    g.heading = 0;
+    g.live = { compass: 90, stop() {} };
+    g.liveFix = { lat: 0, lon: 0, speed: 0, heading: null, accuracy: 5 };
+    g.gpsEst = { x: 0, y: 50, acc: 5, t: 0 };
+    for (let i = 0; i < 120; i++) g.followGps(1 / 60);
+    expect(g.heading).toBeGreaterThan(85);
+  });
+});
