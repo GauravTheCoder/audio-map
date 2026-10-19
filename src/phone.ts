@@ -6,6 +6,7 @@
 import type { AreaSound } from './areas';
 import { compass8, dist } from './geo';
 import type { ActionId, Binding } from './keymap';
+import type { PlaceGroup } from './world';
 import type { Units } from './settings';
 
 export const N = 7;
@@ -23,6 +24,8 @@ export interface PhoneGame {
   directionsText(): string;
   announce(text: string): void;
   setTarget(t: { name: string; x: number; y: number }): void;
+  nearbyList(group: PlaceGroup | null): { id: string; text: string }[];
+  pickPlace(id: string): boolean;
   startLive(): void;
   run(key: string, mods?: { shift?: boolean; ctrl?: boolean }): void;
   keyFor(id: ActionId): Binding;
@@ -37,6 +40,18 @@ export interface PhoneHooks {
   /** turn on turn by turn and the beacon, and keep the screen awake */
   guide(): void;
 }
+
+/** The kinds of place the Nearby list can show. */
+const NEAR_KINDS: [PlaceGroup | null, string][] = [
+  [null, 'All'],
+  ['food', 'Food'],
+  ['shop', 'Shops'],
+  ['transport', 'Transport'],
+  ['health', 'Health'],
+  ['culture', 'Culture'],
+  ['nature', 'Parks'],
+  ['service', 'Services'],
+];
 
 const MAP_KEY = 'audio-map-phone-map';
 
@@ -152,6 +167,16 @@ export class Phone {
     this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
     this.el('ph-start').addEventListener('click', () => this.start());
     this.el('ph-here').addEventListener('click', () => this.action('whereAmI'));
+    this.el('ph-nearby').addEventListener('click', () => this.openNearby());
+    const kinds = this.el('ph-near-kinds');
+    for (const [group, label] of NEAR_KINDS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', () => this.listNearby(group, label));
+      kinds.appendChild(b);
+    }
+    this.el('ph-near-close').addEventListener('click', () => this.el<HTMLDialogElement>('ph-near').close());
     this.el('ph-end').addEventListener('click', () => {
       this.started = false;
       this.action('clearDestination');
@@ -357,6 +382,37 @@ export class Phone {
       g.setTarget({ name: c.text.split(',')[0], x: c.x, y: c.y });
       if (this.mode === 'travel' && !this.started) g.announce('Tap Start to be guided there.');
     });
+  }
+
+  /** Nearby: the places around you, nearest first; choosing one sets it as the destination. */
+  private openNearby() {
+    const d = this.el<HTMLDialogElement>('ph-near');
+    if (!d.open) d.showModal();
+    this.listNearby(null, 'All');
+  }
+
+  private listNearby(group: PlaceGroup | null, label: string) {
+    const g = this.getGame();
+    const list = this.el('ph-near-list');
+    list.replaceChildren();
+    const items = g?.nearbyList(group) ?? [];
+    this.el('ph-near-status').textContent = items.length
+      ? `${label}: ${items.length} nearby, nearest first. Choose one to go there.`
+      : `No ${label === 'All' ? '' : `${label.toLowerCase()} `}places within 500 metres.`;
+    for (const it of items) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = it.text;
+      b.addEventListener('click', () => {
+        this.el<HTMLDialogElement>('ph-near').close();
+        if (!g?.pickPlace(it.id)) return;
+        if (this.mode === 'travel' && !this.started) g.announce('Tap Start to be guided there.');
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    }
+    (list.querySelector('button') as HTMLButtonElement | null)?.focus();
   }
 
   private start() {

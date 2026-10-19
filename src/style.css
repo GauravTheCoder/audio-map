@@ -378,6 +378,21 @@ table.keys {
   }
 }
 
+dialog#ph-near {
+  width: min(560px, calc(100vw - 16px));
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+#ph-near-list button {
+  width: 100%;
+  min-height: 52px;
+  text-align: left;
+}
+
 dialog#nav {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
