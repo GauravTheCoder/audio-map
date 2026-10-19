@@ -303,7 +303,7 @@ function applyShake() {
   });
 }
 let signal: SignalWatcher | null = null;
-const SIGNAL_SPEECH = { dontWalk: "Don't walk signal.", unsure: 'Not sure. Listen to traffic.', none: 'Signal lost.' };
+const SIGNAL_SPEECH = { walk: 'Walk signal. Check for traffic.', dontWalk: "Don't walk signal.", unsure: 'Not sure. Listen to traffic.', none: 'Signal lost.' };
 function stopSignal() {
   signal?.stop();
   signal = null;

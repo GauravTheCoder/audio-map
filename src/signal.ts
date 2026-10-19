@@ -3,7 +3,7 @@
 // walk figure looks like any white glare. A false Walk is the one mistake this must not make.
 // ponytail: counts saturated bright red pixels only. Add a symbol detector (e.g. a small TensorFlow.js model) before reporting Walk.
 
-export type SignalState = 'dontWalk' | 'unsure' | 'none';
+export type SignalState = 'walk' | 'dontWalk' | 'unsure' | 'none';
 
 export interface SignalOptions {
   /** the video element that shows the camera; it must be in the page, and may be hidden from view */

@@ -39,6 +39,8 @@ export interface Settings {
   walkRoute: WalkRoute;
   /** walking routes avoid steps and steep slopes */
   accessibleRoute: boolean;
+  /** the signal watch may send camera frames to Gemini, with the player's own key, to recognise a Walk signal */
+  cloudWalk: boolean;
   soundProfile: SoundProfile;
   soundTheme: SoundTheme;
   customSound: CustomSound;
@@ -73,6 +75,7 @@ const DEFAULTS: Settings = {
   display: 'highContrast',
   walkRoute: 'shortest',
   accessibleRoute: false,
+  cloudWalk: false,
   soundProfile: 'simple',
   soundTheme: 'classic',
   customSound: { places: 'notable', sideStreets: true, extras: true },
