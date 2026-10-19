@@ -1061,6 +1061,23 @@ describe('phone screen', () => {
   });
 });
 
+describe('live GPS sound', () => {
+  it('silences the footsteps while live GPS moves you, and brings them back without it', () => {
+    const { g } = setup();
+    const engine: boolean[] = [];
+    g.audio = new Proxy({}, { get: (_t, p) => (p === 'setEngine' ? (on: boolean) => engine.push(on) : p === 'now' ? 0 : () => {}) });
+    g.syncEngine();
+    g.live = { compass: null, stop() {} };
+    g.syncEngine(); // waiting for a first fix: the keyboard still moves you
+    g.liveFix = { lat: 0, lon: 0, speed: 1.3, heading: 0, accuracy: 5 };
+    g.syncEngine();
+    g.live = null;
+    g.liveFix = null;
+    g.syncEngine();
+    expect(engine).toEqual([true, true, false, true]);
+  });
+});
+
 describe('live GPS walking', () => {
   it('takes "ahead" from the way you walk, not where the phone points', () => {
     const { g } = setup();

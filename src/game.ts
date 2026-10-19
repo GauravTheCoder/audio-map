@@ -645,6 +645,7 @@ export class Game {
       this.step(STEP);
       this.acc -= STEP;
     }
+    this.syncEngine();
     this.audio.update(
       {
         speed: this.speed,
@@ -2950,14 +2951,22 @@ export class Game {
     // face north and stay so: the beacon and clock directions then read as a north-up map
     this.place(this.x, this.y, 0, null);
     this.grid = { key: null, req: 0 };
-    this.audio.setEngine(false); // the vehicle is parked while you step about
+    this.syncEngine(); // the vehicle is parked while you step about
     void this.gridLook(true, `Grid mode, up is north. Arrows move ${this.gridStepText()}; minus and equals change the step. Space says where you are. F3 leaves.`);
+  }
+
+  /**
+   * The vehicle's own sound (footsteps, engine, rotor) plays only while the keyboard moves you: not
+   * in grid mode, where the vehicle is parked, nor with live GPS, where you really are walking or driving.
+   */
+  private syncEngine() {
+    this.audio.setEngine(!this.grid && !(this.live && this.liveFix));
   }
 
   /** Leave grid mode (if on) and start the vehicle's sound again. */
   exitGrid() {
     this.grid = null;
-    this.audio.setEngine(true);
+    this.syncEngine();
   }
 
   /** Keys that work differently in grid mode; returns false for the rest. */
