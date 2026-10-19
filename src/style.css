@@ -430,6 +430,21 @@ dialog#nav label {
 #phone[hidden] {
   display: none;
 }
+/* first screen on a phone: only Begin and Full menu, which unlock sound, speech and location with a tap */
+#phone:not(.welcome) .ph-welcome,
+#phone.welcome > :not(.ph-welcome) {
+  display: none;
+}
+.ph-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: auto 0;
+}
+.ph-welcome button {
+  min-height: 72px;
+  font-size: 1.4rem;
+}
 .ph-dirs {
   width: 100%;
   min-height: 64px;
@@ -475,6 +490,14 @@ dialog#nav label {
 #ph-grid .cell[data-sound='commercial'],
 #ph-grid .cell[data-sound='industrial'],
 #ph-grid .cell[data-sound='civic'] { background: #8a5fb8; color: #ffffff; }
+/* map hidden: the directions get the room */
+#phone.no-map .ph-dirs {
+  min-height: 40vh;
+  font-size: 1.6rem;
+}
+#ph-grid[hidden] {
+  display: none;
+}
 .ph-status {
   margin: 0;
   text-align: center;

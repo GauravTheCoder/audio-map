@@ -38,6 +38,21 @@ export interface PhoneHooks {
   guide(): void;
 }
 
+const MAP_KEY = 'audio-map-phone-map';
+
+function loadMapShown(): boolean {
+  try {
+    return localStorage.getItem(MAP_KEY) !== 'hidden';
+  } catch {
+    return true;
+  }
+}
+
+/** A phone, not a tablet or touch laptop: a touch screen whose shorter side is at most 600 CSS pixels. */
+export function isPhone(coarsePointer: boolean, shortSide: number): boolean {
+  return coarsePointer && shortSide <= 600;
+}
+
 /** Metres in one unit of distance. */
 const unitM = (u: Units) => (u === 'imperial' ? 0.9144 : 1);
 
@@ -155,6 +170,10 @@ export class Phone {
     this.el('ph-dest').addEventListener('click', () => this.setDestination());
     this.el('ph-voice').addEventListener('click', () => (this.el('ph-voice').textContent = this.hooks.toggleVoice()));
     this.el('ph-menu').addEventListener('click', () => this.hooks.openMenu());
+    this.el('ph-map').addEventListener('click', () => {
+      this.showMap(!this.mapShown);
+      this.game((g) => g.announce(this.mapShown ? 'Map shown.' : 'Map hidden. The directions and buttons stay.'));
+    });
     this.el('ph-mode').addEventListener('click', () => this.setMode(this.mode === 'travel' ? 'explore' : 'travel', true));
   }
 
@@ -162,8 +181,34 @@ export class Phone {
     return !this.root.hidden;
   }
 
+  /** Whether the touch map is on screen; remembered between visits. Hidden, the directions and buttons have the room. */
+  private mapShown = loadMapShown();
+
+  private showMap(on: boolean) {
+    this.mapShown = on;
+    this.el('ph-grid').hidden = !on;
+    this.el('ph-dest').hidden = !on; // squares are chosen on the map
+    this.el('ph-map').textContent = on ? 'Hide map' : 'Show map';
+    this.root.classList.toggle('no-map', !on);
+    if (on) this.frame = null; // it was not kept up to date while hidden
+    try {
+      localStorage.setItem(MAP_KEY, on ? 'shown' : 'hidden');
+    } catch {
+      // ignore
+    }
+  }
+
+  /** The first screen on a phone: Begin (which, being a tap, may start sound, speech and location) or the full menu. */
+  welcome() {
+    this.root.hidden = false;
+    this.root.classList.add('welcome');
+    this.el('ph-begin').focus();
+  }
+
   show(mode: 'travel' | 'explore') {
     this.root.hidden = false;
+    this.showMap(this.mapShown);
+    this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.setMode(mode, false);
     clearInterval(this.timer);
@@ -174,6 +219,7 @@ export class Phone {
 
   hide() {
     this.root.hidden = true;
+    this.root.classList.remove('welcome');
     clearInterval(this.timer);
   }
 
@@ -239,7 +285,7 @@ export class Phone {
   private async render() {
     const g = this.getGame();
     const f = this.frame;
-    if (!g || !f) return;
+    if (!g || !f || !this.mapShown) return;
     const seq = ++this.seq;
     const travel = f.mode === 'travel';
     const n = SQUARES[this.sizeIdx];
