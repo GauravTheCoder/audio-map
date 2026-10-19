@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellPoint, nextUp, offsetText } from './phone';
+import { cellPoint, isPhone, nextUp, offsetText } from './phone';
 
 describe('cellPoint', () => {
   it('puts the top row ahead and the right column to the right, whichever way is up', () => {
@@ -42,5 +42,14 @@ describe('nextUp', () => {
     expect(r.turned).toBe(false);
     r = nextUp(r.state, { dir: 0, street: 'Goodwin Avenue' }, 1600);
     expect(r).toEqual({ state: { dir: 0, street: 'Goodwin Avenue' }, turned: true });
+  });
+});
+
+describe('isPhone', () => {
+  it('counts touch screens up to 600 pixels on their shorter side', () => {
+    expect(isPhone(true, 390)).toBe(true); // iPhone
+    expect(isPhone(true, 412)).toBe(true); // Android phone
+    expect(isPhone(true, 820)).toBe(false); // iPad
+    expect(isPhone(false, 390)).toBe(false); // a narrow desktop window
   });
 });

@@ -18,7 +18,7 @@ import { setupRebind } from './rebind';
 import { setupTouch } from './touch';
 import { setupVoice } from './voice';
 import { postOsmNote } from './osmnotes';
-import { Phone } from './phone';
+import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -302,6 +302,7 @@ const phone = new Phone($('phone'), () => game, {
 
 /** Phone mode: find where you are, then the touch map in travel mode. Without a location, explore mode. */
 function startPhone() {
+  rememberPhone(true);
   stopPreview(speech);
   void requestCompass(); // from this tap: iOS asks for the compass only in a user gesture
   if (settings.vehicle !== 'walker') update({ vehicle: 'walker' }); // live GPS on a phone means walking
@@ -338,6 +339,31 @@ function leavePhone() {
 }
 
 $('phone-btn').addEventListener('click', startPhone);
+$('ph-begin').addEventListener('click', startPhone);
+$('ph-fullmenu').addEventListener('click', () => {
+  leavePhone();
+  openMenu('main');
+});
+
+/** Which first screen to show: the last one chosen (Phone mode or Start), else phone mode on a phone. */
+const PHONE_KEY = 'audio-map-phone';
+function rememberPhone(on: boolean) {
+  try {
+    localStorage.setItem(PHONE_KEY, on ? 'on' : 'off');
+  } catch {
+    // ignore
+  }
+}
+function prefersPhone(): boolean {
+  let pref: string | null = null;
+  try {
+    pref = localStorage.getItem(PHONE_KEY);
+  } catch {
+    pref = null;
+  }
+  if (pref === 'on' || pref === 'off') return pref === 'on';
+  return isPhone(matchMedia('(pointer: coarse)').matches, Math.min(screen.width, screen.height));
+}
 
 /** The game, created on first use (on a user gesture, so the browser allows sound). */
 function ensureGame(): Game {
@@ -380,6 +406,7 @@ function ensureGame(): Game {
 }
 
 function startGame(learn = false) {
+  rememberPhone(false);
   stopPreview(speech);
   const game = ensureGame();
   leavePhone();
@@ -693,7 +720,11 @@ bindSettings();
 initPreview(() => settings, speech);
 setupBackup(update);
 select(selected);
-openMenu('main');
+// a shared link says where to start, so it opens the menu; otherwise phones begin in phone mode
+if (!shared && prefersPhone()) {
+  $('app').inert = true;
+  phone.welcome();
+} else openMenu('main');
 
 // the dev server must not serve stale files from a worker
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
