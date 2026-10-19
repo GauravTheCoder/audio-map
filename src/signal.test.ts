@@ -9,7 +9,7 @@ function frame(rgb: [number, number, number], count: number): Uint8ClampedArray 
 }
 
 describe('classify', () => {
-  it('sees a lit green signal as walk', () => expect(classify(frame([20, 230, 90], 8))).toBe('walk'));
+  it('never sees green as walk', () => expect(classify(frame([20, 230, 90], 100))).toBe('none'));
   it('sees a lit red signal as dont walk', () => expect(classify(frame([240, 30, 20], 8))).toBe('dontWalk'));
   it('sees an orange hand as dont walk', () => expect(classify(frame([255, 90, 0], 8))).toBe('dontWalk'));
   it('ignores a frame with too few lit pixels', () => expect(classify(frame([240, 30, 20], 1))).toBe('none'));
@@ -17,10 +17,10 @@ describe('classify', () => {
     expect(classify(frame([90, 120, 90], 100))).toBe('none');
     expect(classify(frame([255, 255, 255], 100))).toBe('none');
   });
-  it('picks the larger of two lit colours', () => {
+  it('still warns when green shows beside red', () => {
     const d = frame([20, 230, 90], 10);
     d.set([240, 30, 20, 255], 399 * 4);
     d.set([240, 30, 20, 255], 398 * 4);
-    expect(classify(d)).toBe('walk');
+    expect(classify(d)).toBe('dontWalk');
   });
 });

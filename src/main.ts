@@ -303,7 +303,7 @@ function applyShake() {
   });
 }
 let signal: SignalWatcher | null = null;
-const SIGNAL_SPEECH = { walk: 'Walk signal.', dontWalk: "Don't walk signal.", none: 'Signal lost.' };
+const SIGNAL_SPEECH = { dontWalk: "Don't walk signal.", none: 'Signal lost.' };
 function stopSignal() {
   signal?.stop();
   signal = null;
@@ -355,7 +355,7 @@ const phone = new Phone($('phone'), () => game, {
       return false;
     }
     signal = w;
-    speech.say('Point the back camera at the crossing signal. This is an aid only: fast beeps mean walk, slow beeps mean do not walk. Always check the street yourself.', 'high');
+    speech.say('Point the back camera at the crossing signal. This is an aid only: slow beeps mean a red or orange do not walk signal is seen. Silence does not mean walk. Always check the street yourself.', 'high');
     return true;
   },
   guide: () => {

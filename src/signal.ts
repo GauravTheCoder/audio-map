@@ -1,9 +1,9 @@
-// Watches the rear camera for a pedestrian signal and beeps and buzzes for it: fast for Walk, slow for Don't Walk.
-// iOS Safari has no vibrate(); there a hidden <input switch> is toggled instead, which makes iOS 17.4+ tick the Taptic Engine.
-// ponytail: counts saturated bright green and red pixels only. A white (US) walk figure looks like any white
-// glare, so it is not detected; add a shape or model check (TensorFlow.js) if that is needed.
+// Watches the rear camera for a lit red or orange pedestrian signal and beeps slowly for it.
+// It never reports Walk: a green blob is as likely a car light or a sign as a pedestrian signal, and a white (US)
+// walk figure looks like any white glare. A false Walk is the one mistake this must not make.
+// ponytail: counts saturated bright red pixels only. Add a symbol detector (e.g. a small TensorFlow.js model) before reporting Walk.
 
-export type SignalState = 'walk' | 'dontWalk' | 'none';
+export type SignalState = 'dontWalk' | 'none';
 
 export interface SignalOptions {
   /** the video element that shows the camera; it must be in the page, and may be hidden from view */
@@ -16,8 +16,6 @@ export interface SignalOptions {
   minFraction?: number;
   /** same reading in a row before the state changes, so one noisy frame does not flip the alert */
   confirmFrames?: number;
-  /** milliseconds between beeps while Walk shows */
-  walkBeepMs?: number;
   /** milliseconds between beeps while Don't Walk shows */
   dontWalkBeepMs?: number;
 }
@@ -34,19 +32,16 @@ function hsv(r: number, g: number, b: number): [number, number, number] {
   return [h * 60, max ? d / max : 0, max / 255];
 }
 
-/** Classify RGBA pixels: whichever of lit green or lit red covers the larger share, if it covers enough of the frame. */
+/** Classify RGBA pixels: lit red or orange covering enough of the frame is a Don't Walk signal. */
 export function classify(rgba: Uint8ClampedArray, minFraction = 0.004): SignalState {
-  let green = 0;
   let red = 0;
   for (let i = 0; i < rgba.length; i += 4) {
     const [h, s, v] = hsv(rgba[i], rgba[i + 1], rgba[i + 2]);
     if (s < 0.6 || v < 0.7) continue; // a lit lamp is bright and saturated; paint and foliage are not
-    if (h >= 90 && h <= 175) green++;
-    else if (h <= 40 || h >= 340) red++; // the US "hand" is orange-red
+    if (h <= 40 || h >= 340) red++; // the US "hand" is orange-red
   }
   const need = (rgba.length / 4) * minFraction;
-  if (Math.max(green, red) < need) return 'none';
-  return green > red ? 'walk' : 'dontWalk';
+  return red < need ? 'none' : 'dontWalk';
 }
 
 export class SignalWatcher {
@@ -54,7 +49,6 @@ export class SignalWatcher {
   private readonly canvas = document.createElement('canvas');
   private stream: MediaStream | null = null;
   private audio: AudioContext | null = null;
-  private tap: HTMLLabelElement | null = null;
   private scan: ReturnType<typeof setInterval> | undefined;
   private alert: ReturnType<typeof setInterval> | undefined;
   private state: SignalState = 'none';
@@ -62,7 +56,7 @@ export class SignalWatcher {
   private run = 0;
 
   constructor(options: SignalOptions) {
-    this.o = { fps: 5, minFraction: 0.004, confirmFrames: 3, walkBeepMs: 250, dontWalkBeepMs: 1200, ...options };
+    this.o = { fps: 5, minFraction: 0.004, confirmFrames: 3, dontWalkBeepMs: 1200, ...options };
     this.canvas.width = SIZE.w;
     this.canvas.height = SIZE.h;
   }
@@ -80,16 +74,6 @@ export class SignalWatcher {
     this.o.video.setAttribute('playsinline', '');
     await this.o.video.play();
     this.audio = new AudioContext();
-    if (typeof navigator.vibrate !== 'function') {
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.setAttribute('switch', '');
-      this.tap = document.createElement('label');
-      this.tap.setAttribute('aria-hidden', 'true');
-      this.tap.style.cssText = 'position:fixed;opacity:0;pointer-events:none;left:0;top:0';
-      this.tap.append(input);
-      document.body.append(this.tap);
-    }
     this.scan = setInterval(() => this.frame(), 1000 / this.o.fps);
   }
 
@@ -103,8 +87,6 @@ export class SignalWatcher {
     this.o.video.srcObject = null;
     void this.audio?.close();
     this.audio = null;
-    this.tap?.remove();
-    this.tap = null;
   }
 
   private frame(): void {
@@ -126,22 +108,11 @@ export class SignalWatcher {
     this.state = next;
     clearInterval(this.alert);
     this.alert = undefined;
-    navigator.vibrate?.(0);
     if (next !== 'none') {
-      const walk = next === 'walk';
-      const tick = () => {
-        this.beep(walk ? 1000 : 400);
-        if (walk) this.buzz(); // re-issued every tick, so it reads as one continuous buzz
-      };
-      tick();
-      this.alert = setInterval(tick, walk ? this.o.walkBeepMs : this.o.dontWalkBeepMs);
+      this.beep(400);
+      this.alert = setInterval(() => this.beep(400), this.o.dontWalkBeepMs);
     }
     this.o.onChange?.(next);
-  }
-
-  private buzz(): void {
-    if (navigator.vibrate) navigator.vibrate(300);
-    else this.tap?.click(); // ponytail: iOS may only allow this soon after a tap; no fallback if it refuses
   }
 
   private beep(hz: number): void {
