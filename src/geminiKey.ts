@@ -2,6 +2,8 @@
 // imported and validated as a whole, and the key must not travel in any of that. It is sent only by cloudSignal.ts.
 
 const KEY = 'audio-map-gemini-key';
+/** a key the player chose not to have remembered lives only here, and is gone when the page closes */
+let memory: string | null = null;
 
 /** Google keys are one token of letters, digits, '-', '_' and '.'; anything else (spaces, newlines, URLs) is a paste mistake. */
 export function cleanKey(raw: string): string | null {
@@ -10,6 +12,7 @@ export function cleanKey(raw: string): string | null {
 }
 
 export function loadKey(): string | null {
+  if (memory) return memory;
   try {
     return cleanKey(localStorage.getItem(KEY) ?? '');
   } catch {
@@ -17,19 +20,33 @@ export function loadKey(): string | null {
   }
 }
 
-/** Returns false if the key is malformed or storage is unavailable. */
-export function saveKey(raw: string): boolean {
+/** Keep the key for this page, and on this device too if `remember`. Returns false if it is malformed. */
+export function saveKey(raw: string, remember = true): boolean {
   const k = cleanKey(raw);
   if (!k) return false;
+  memory = k;
+  if (!remember) forgetStoredKey();
+  else {
+    try {
+      localStorage.setItem(KEY, k);
+    } catch {
+      // the key still works until the page closes
+    }
+  }
+  return true;
+}
+
+/** Remove the copy kept on this device; a key held for this page stays. */
+export function forgetStoredKey(): void {
   try {
-    localStorage.setItem(KEY, k);
-    return true;
+    localStorage.removeItem(KEY);
   } catch {
-    return false;
+    // nothing stored that could be removed
   }
 }
 
 export function clearKey(): void {
+  memory = null;
   try {
     localStorage.removeItem(KEY);
   } catch {

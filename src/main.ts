@@ -28,7 +28,7 @@ import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
 import { SignalWatcher } from './signal';
 import { KeyRejected, askGemini } from './cloudSignal';
-import { clearKey, loadKey, saveKey } from './geminiKey';
+import { clearKey, forgetStoredKey, loadKey, saveKey } from './geminiKey';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -83,7 +83,7 @@ function bindSettings() {
       });
     }
   }
-  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute', 'cloudWalk'] as const) {
+  for (const id of ['announceStreets', 'announcePlaces', 'announceHazards', 'haptics', 'announceHeadingAfterTurn', 'compassTicks', 'roadAssist', 'proximityBeeps', 'turnByTurn', 'beaconSound', 'headingUpMap', 'accessibleRoute', 'cloudWalk', 'forgetKey'] as const) {
     const el = $<HTMLInputElement>(id);
     el.checked = settings[id];
     el.addEventListener('change', () => update({ [id]: el.checked }));
@@ -110,10 +110,17 @@ function bindSettings() {
   for (const el of [places, side, extras]) el.addEventListener('change', custom);
   const keyField = $<HTMLInputElement>('gemini-key');
   const keyStatus = $('gemini-status');
-  const showKey = (msg = '') => (keyStatus.textContent = `${msg} ${loadKey() ? 'A key is saved on this device.' : 'No key is saved.'}`.trim());
+  const showKey = (msg = '') => {
+    const held = loadKey() ? (settings.forgetKey ? 'A key is held until you close this page.' : 'A key is saved on this device.') : 'No key is saved.';
+    keyStatus.textContent = `${msg} ${held}`.trim();
+  };
   showKey();
+  $('forgetKey').addEventListener('change', () => {
+    if (settings.forgetKey) forgetStoredKey();
+    showKey();
+  });
   $('gemini-save').addEventListener('click', () => {
-    const ok = saveKey(keyField.value);
+    const ok = saveKey(keyField.value, !settings.forgetKey);
     keyField.value = '';
     showKey(ok ? 'Key saved.' : 'That does not look like an API key; paste only the key.');
   });
