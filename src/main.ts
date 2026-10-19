@@ -27,7 +27,7 @@ import { Phone, isPhone } from './phone';
 import { requestCompass } from './gps';
 import { requestMotion, startShake } from './shake';
 import { SignalWatcher } from './signal';
-import { KeyRejected, askGemini, listModels, type ModelChoice } from './cloudSignal';
+import { KeyRejected, askGemini, findImageModels, listModels, type ModelChoice, type Swatch } from './cloudSignal';
 import { clearKey, forgetStoredKey, loadKey, saveKey } from './geminiKey';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -127,16 +127,27 @@ function bindSettings() {
     const key = loadKey();
     if (!key) return showKey('Save a key first.');
     keyStatus.textContent = 'Asking Google for the models this key can use…';
-    listModels(key).then(
-      (choices) => {
-        showModels(choices);
-        showKey(choices.length ? `${choices.length} models found. Choose one.` : 'Google listed no usable Gemini models for this key.');
-      },
-      (e: unknown) => {
-        if (e instanceof KeyRejected) clearKey();
-        showKey(e instanceof KeyRejected ? 'Google refused the key, so it was removed.' : 'Could not load the models. Check the connection and try again.');
-      },
-    );
+    const swatch = (colour: string, fill: string): Swatch => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      g.fillStyle = fill;
+      g.fillRect(0, 0, 64, 64);
+      return { png: c.toDataURL('image/png').split(',')[1], colour };
+    };
+    listModels(key)
+      .then((choices) => findImageModels(key, choices, [swatch('red', '#e02020'), swatch('green', '#20c040')], (d, n) => (keyStatus.textContent = `Testing which models can read pictures: ${d} of ${n}…`)))
+      .then(
+        ({ ok, untested }) => {
+          showModels(ok);
+          const skipped = untested ? ` ${untested} could not be tested, for example because of a rate limit; try again later.` : '';
+          showKey(ok.length ? `${ok.length} models can read pictures. Choose one.${skipped}` : `No model could be shown to read pictures.${skipped}`);
+        },
+        (e: unknown) => {
+          if (e instanceof KeyRejected) clearKey();
+          showKey(e instanceof KeyRejected ? 'Google refused the key, so it was removed.' : 'Could not load the models. Check the connection and try again.');
+        },
+      );
   });
   $('forgetKey').addEventListener('change', () => {
     if (settings.forgetKey) forgetStoredKey();

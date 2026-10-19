@@ -225,6 +225,8 @@
             more private. Create the key in Google AI Studio, limit it to the Gemini API and give it a low quota. If you lose the phone, revoke the key there.
             The key is sent only to Google and is never included in Export my data. By default it is kept unencrypted in this browser's storage,
             where any script running on this page could read it; the page blocks scripts from elsewhere, but treat the key as something you can replace.
+            Loading the model list also sends each model a couple of tiny test pictures (plain colour squares, never camera photos) to check that it can
+            read pictures: about two calls per model, which count against your quota.
             Gemini can be wrong: always check the street yourself.
           </p>
           <label><input type="checkbox" id="cloudWalk" /> Use Gemini to recognise Walk signals (sends camera photos to Google)</label>

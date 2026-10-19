@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { KeyRejected, askGemini, isModel, listModels, parseAnswer, parseModels } from './cloudSignal';
+import { KeyRejected, askGemini, findImageModels, isModel, listModels, parseAnswer, parseModels, readsImages } from './cloudSignal';
 import { cleanKey } from './geminiKey';
 import { validate } from './backup';
 
@@ -106,5 +106,47 @@ describe('models', () => {
   it('is not carried by backups unless it is a plain model name', () => {
     expect(validate({ app: 'audio-map', settings: { geminiModel: 'models/gemini-a' } }).settings.geminiModel).toBe('models/gemini-a');
     expect(validate({ app: 'audio-map', settings: { geminiModel: 'https://evil.test' } }).settings.geminiModel).toBeUndefined();
+  });
+});
+
+describe('image-capable models', () => {
+  const swatches = [
+    { png: 'RED', colour: 'red' },
+    { png: 'GRN', colour: 'green' },
+  ];
+  afterEach(() => vi.unstubAllGlobals());
+  /** fetch that names each colour square correctly for models in `seeing`, wrongly for others, and answers 429 for models in `busy` */
+  const fake = (seeing: string[], busy: string[] = []) =>
+    vi.fn(async (url: string, init: { body: string }) => {
+      const model = /models\/([^:]+):/.exec(url)![1];
+      if (busy.includes(model)) return { status: 429, ok: false, json: async () => ({}) };
+      const sent = JSON.parse(init.body).contents[0].parts[1].inline_data.data as string;
+      const truth = sent === 'RED' ? 'red' : 'green';
+      return { status: 200, ok: true, json: async () => reply(seeing.includes(model) ? truth : 'blue') };
+    });
+
+  it('says yes only when every colour is named, and no when one is missed', async () => {
+    vi.stubGlobal('fetch', fake(['gemini-a']));
+    expect(await readsImages(KEY, 'models/gemini-a', swatches)).toBe('yes');
+    expect(await readsImages(KEY, 'models/gemini-b', swatches)).toBe('no');
+  });
+  it('treats a 400 as no, and a rate limit as untested rather than no', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 400, ok: false, json: async () => ({}) }));
+    expect(await readsImages(KEY, 'models/gemini-a', swatches)).toBe('no');
+    vi.stubGlobal('fetch', fake([], ['gemini-a']));
+    expect(await readsImages(KEY, 'models/gemini-a', swatches)).toBe('error');
+  });
+  it('keeps only the models that read pictures and counts the untested', async () => {
+    vi.stubGlobal('fetch', fake(['gemini-a', 'gemini-d'], ['gemini-c']));
+    const choices = ['a', 'b', 'c', 'd'].map((n) => ({ name: `models/gemini-${n}`, label: n }));
+    const seen: number[] = [];
+    const out = await findImageModels(KEY, choices, swatches, (d) => seen.push(d));
+    expect(out.ok.map((m) => m.label)).toEqual(['a', 'd']);
+    expect(out.untested).toBe(1);
+    expect(seen).toHaveLength(4);
+  });
+  it('stops on a refused key', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 403, ok: false, json: async () => ({}) }));
+    await expect(findImageModels(KEY, [{ name: 'models/gemini-a', label: 'a' }], swatches)).rejects.toBeInstanceOf(KeyRejected);
   });
 });
