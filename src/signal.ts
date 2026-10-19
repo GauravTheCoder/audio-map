@@ -34,6 +34,8 @@ const CLOUD_MS = 1000; // one photo to the recogniser per second
 const CLOUD_FRESH_MS = 2500; // an answer older than this no longer counts
 const CLOUD_CONFIRM = 3; // the same answer this many times in a row before it counts
 const CLOUD_WIDTH = 640;
+/** the part of the frame that counts, as fractions: the signal being crossed is aimed at, so the edges are not ours (and may hold bystanders) */
+const CENTRE = { x0: 0.25, x1: 0.75, y0: 0.2, y1: 0.8 };
 
 /** Hue (degrees), saturation and value (0-1) of an RGB pixel. */
 function hsv(r: number, g: number, b: number): [number, number, number] {
@@ -56,7 +58,7 @@ export function classify(rgba: Uint8ClampedArray, width: number, minFraction = 0
   for (let i = 0; i < rgba.length; i += 4) {
     const x = (i / 4) % width;
     const y = Math.floor(i / 4 / width);
-    if (x < width * 0.25 || x >= width * 0.75 || y < rows * 0.2 || y >= rows * 0.8) continue;
+    if (x < width * CENTRE.x0 || x >= width * CENTRE.x1 || y < rows * CENTRE.y0 || y >= rows * CENTRE.y1) continue;
     const [h, s, v] = hsv(rgba[i], rgba[i + 1], rgba[i + 2]);
     if (s < 0.6 || v < 0.7) continue; // a lit lamp is bright and saturated; paint and foliage are not
     if (h >= 90 && h <= 175) green++;
@@ -152,9 +154,14 @@ export class SignalWatcher {
     this.cloudBusy = true;
     let answer: SignalState = 'none';
     try {
+      // only the middle of the frame is sent, so bystanders and plates at the edges never leave the phone
+      const sx = video.videoWidth * CENTRE.x0;
+      const sy = video.videoHeight * CENTRE.y0;
+      const sw = video.videoWidth * (CENTRE.x1 - CENTRE.x0);
+      const sh = video.videoHeight * (CENTRE.y1 - CENTRE.y0);
       this.photo.width = CLOUD_WIDTH;
-      this.photo.height = Math.round((CLOUD_WIDTH * video.videoHeight) / Math.max(1, video.videoWidth));
-      this.photo.getContext('2d')?.drawImage(video, 0, 0, this.photo.width, this.photo.height);
+      this.photo.height = Math.round((CLOUD_WIDTH * sh) / Math.max(1, sw));
+      this.photo.getContext('2d')?.drawImage(video, sx, sy, sw, sh, 0, 0, this.photo.width, this.photo.height);
       answer = await cloud(this.photo.toDataURL('image/jpeg', 0.6).split(',')[1]);
     } catch {
       // a failed or late answer is the same as no answer
