@@ -378,6 +378,21 @@ table.keys {
   }
 }
 
+dialog#ph-near {
+  width: min(560px, calc(100vw - 16px));
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+#ph-near-list button {
+  width: 100%;
+  min-height: 52px;
+  text-align: left;
+}
+
 dialog#nav {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
@@ -430,6 +445,21 @@ dialog#nav label {
 #phone[hidden] {
   display: none;
 }
+/* first screen on a phone: only Begin and Full menu, which unlock sound, speech and location with a tap */
+#phone:not(.welcome) .ph-welcome,
+#phone.welcome > :not(.ph-welcome) {
+  display: none;
+}
+.ph-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: auto 0;
+}
+.ph-welcome button {
+  min-height: 72px;
+  font-size: 1.4rem;
+}
 .ph-dirs {
   width: 100%;
   min-height: 64px;
@@ -475,6 +505,14 @@ dialog#nav label {
 #ph-grid .cell[data-sound='commercial'],
 #ph-grid .cell[data-sound='industrial'],
 #ph-grid .cell[data-sound='civic'] { background: #8a5fb8; color: #ffffff; }
+/* map hidden: the directions get the room */
+#phone.no-map .ph-dirs {
+  min-height: 40vh;
+  font-size: 1.6rem;
+}
+#ph-grid[hidden] {
+  display: none;
+}
 .ph-status {
   margin: 0;
   text-align: center;

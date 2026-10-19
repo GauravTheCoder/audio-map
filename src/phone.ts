@@ -6,6 +6,7 @@
 import type { AreaSound } from './areas';
 import { compass8, dist } from './geo';
 import type { ActionId, Binding } from './keymap';
+import type { PlaceGroup } from './world';
 import type { Units } from './settings';
 
 export const N = 7;
@@ -23,6 +24,8 @@ export interface PhoneGame {
   directionsText(): string;
   announce(text: string): void;
   setTarget(t: { name: string; x: number; y: number }): void;
+  nearbyList(group: PlaceGroup | null): { id: string; text: string }[];
+  pickPlace(id: string): boolean;
   startLive(): void;
   run(key: string, mods?: { shift?: boolean; ctrl?: boolean }): void;
   keyFor(id: ActionId): Binding;
@@ -36,6 +39,33 @@ export interface PhoneHooks {
   voiceLabel(): string;
   /** turn on turn by turn and the beacon, and keep the screen awake */
   guide(): void;
+}
+
+/** The kinds of place the Nearby list can show. */
+const NEAR_KINDS: [PlaceGroup | null, string][] = [
+  [null, 'All'],
+  ['food', 'Food'],
+  ['shop', 'Shops'],
+  ['transport', 'Transport'],
+  ['health', 'Health'],
+  ['culture', 'Culture'],
+  ['nature', 'Parks'],
+  ['service', 'Services'],
+];
+
+const MAP_KEY = 'audio-map-phone-map';
+
+function loadMapShown(): boolean {
+  try {
+    return localStorage.getItem(MAP_KEY) !== 'hidden';
+  } catch {
+    return true;
+  }
+}
+
+/** A phone, not a tablet or touch laptop: a touch screen whose shorter side is at most 600 CSS pixels. */
+export function isPhone(coarsePointer: boolean, shortSide: number): boolean {
+  return coarsePointer && shortSide <= 600;
 }
 
 /** Metres in one unit of distance. */
@@ -137,6 +167,16 @@ export class Phone {
     this.el('ph-where').addEventListener('click', () => this.hooks.openSearch());
     this.el('ph-start').addEventListener('click', () => this.start());
     this.el('ph-here').addEventListener('click', () => this.action('whereAmI'));
+    this.el('ph-nearby').addEventListener('click', () => this.openNearby());
+    const kinds = this.el('ph-near-kinds');
+    for (const [group, label] of NEAR_KINDS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', () => this.listNearby(group, label));
+      kinds.appendChild(b);
+    }
+    this.el('ph-near-close').addEventListener('click', () => this.el<HTMLDialogElement>('ph-near').close());
     this.el('ph-end').addEventListener('click', () => {
       this.started = false;
       this.action('clearDestination');
@@ -155,6 +195,10 @@ export class Phone {
     this.el('ph-dest').addEventListener('click', () => this.setDestination());
     this.el('ph-voice').addEventListener('click', () => (this.el('ph-voice').textContent = this.hooks.toggleVoice()));
     this.el('ph-menu').addEventListener('click', () => this.hooks.openMenu());
+    this.el('ph-map').addEventListener('click', () => {
+      this.showMap(!this.mapShown);
+      this.game((g) => g.announce(this.mapShown ? 'Map shown.' : 'Map hidden. The directions and buttons stay.'));
+    });
     this.el('ph-mode').addEventListener('click', () => this.setMode(this.mode === 'travel' ? 'explore' : 'travel', true));
   }
 
@@ -162,8 +206,34 @@ export class Phone {
     return !this.root.hidden;
   }
 
+  /** Whether the touch map is on screen; remembered between visits. Hidden, the directions and buttons have the room. */
+  private mapShown = loadMapShown();
+
+  private showMap(on: boolean) {
+    this.mapShown = on;
+    this.el('ph-grid').hidden = !on;
+    this.el('ph-dest').hidden = !on; // squares are chosen on the map
+    this.el('ph-map').textContent = on ? 'Hide map' : 'Show map';
+    this.root.classList.toggle('no-map', !on);
+    if (on) this.frame = null; // it was not kept up to date while hidden
+    try {
+      localStorage.setItem(MAP_KEY, on ? 'shown' : 'hidden');
+    } catch {
+      // ignore
+    }
+  }
+
+  /** The first screen on a phone: Begin (which, being a tap, may start sound, speech and location) or the full menu. */
+  welcome() {
+    this.root.hidden = false;
+    this.root.classList.add('welcome');
+    this.el('ph-begin').focus();
+  }
+
   show(mode: 'travel' | 'explore') {
     this.root.hidden = false;
+    this.showMap(this.mapShown);
+    this.root.classList.remove('welcome');
     this.el('ph-voice').textContent = this.hooks.voiceLabel();
     this.setMode(mode, false);
     clearInterval(this.timer);
@@ -174,6 +244,7 @@ export class Phone {
 
   hide() {
     this.root.hidden = true;
+    this.root.classList.remove('welcome');
     clearInterval(this.timer);
   }
 
@@ -239,7 +310,7 @@ export class Phone {
   private async render() {
     const g = this.getGame();
     const f = this.frame;
-    if (!g || !f) return;
+    if (!g || !f || !this.mapShown) return;
     const seq = ++this.seq;
     const travel = f.mode === 'travel';
     const n = SQUARES[this.sizeIdx];
@@ -311,6 +382,37 @@ export class Phone {
       g.setTarget({ name: c.text.split(',')[0], x: c.x, y: c.y });
       if (this.mode === 'travel' && !this.started) g.announce('Tap Start to be guided there.');
     });
+  }
+
+  /** Nearby: the places around you, nearest first; choosing one sets it as the destination. */
+  private openNearby() {
+    const d = this.el<HTMLDialogElement>('ph-near');
+    if (!d.open) d.showModal();
+    this.listNearby(null, 'All');
+  }
+
+  private listNearby(group: PlaceGroup | null, label: string) {
+    const g = this.getGame();
+    const list = this.el('ph-near-list');
+    list.replaceChildren();
+    const items = g?.nearbyList(group) ?? [];
+    this.el('ph-near-status').textContent = items.length
+      ? `${label}: ${items.length} nearby, nearest first. Choose one to go there.`
+      : `No ${label === 'All' ? '' : `${label.toLowerCase()} `}places within 500 metres.`;
+    for (const it of items) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = it.text;
+      b.addEventListener('click', () => {
+        this.el<HTMLDialogElement>('ph-near').close();
+        if (!g?.pickPlace(it.id)) return;
+        if (this.mode === 'travel' && !this.started) g.announce('Tap Start to be guided there.');
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    }
+    (list.querySelector('button') as HTMLButtonElement | null)?.focus();
   }
 
   private start() {

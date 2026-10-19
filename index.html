@@ -34,6 +34,12 @@
     </div>
 
     <section id="phone" hidden aria-label="Phone">
+      <div class="ph-welcome">
+        <h1>Audio Map Explorer</h1>
+        <p>Phone mode: a touch map around you, directions to where you are going, and a sound beacon. It uses your location.</p>
+        <button type="button" id="ph-begin" class="primary">Begin</button>
+        <button type="button" id="ph-fullmenu">Full menu</button>
+      </div>
       <button type="button" id="ph-dirs" class="ph-dirs">Choose a destination: tap Where to.</button>
       <div id="ph-grid" role="group" aria-label="Map. Touch a square to hear what is there; double tap for more."></div>
       <p id="ph-status" class="ph-status"></p>
@@ -41,6 +47,7 @@
         <button type="button" id="ph-where">Where to?</button>
         <button type="button" id="ph-start" class="primary">Start</button>
         <button type="button" id="ph-here">Where am I</button>
+        <button type="button" id="ph-nearby">Nearby</button>
         <button type="button" id="ph-end">End route</button>
       </div>
       <div id="ph-explore" class="ph-row" hidden>
@@ -54,11 +61,20 @@
       </div>
       <div class="ph-row">
         <button type="button" id="ph-dest" disabled>Set as destination</button>
+        <button type="button" id="ph-map"></button>
         <button type="button" id="ph-voice"></button>
         <button type="button" id="ph-menu">Menu</button>
       </div>
       <button type="button" id="ph-mode" class="ph-mode"></button>
     </section>
+
+    <dialog id="ph-near" aria-labelledby="ph-near-title">
+      <h2 id="ph-near-title">Nearby</h2>
+      <div class="ph-row" role="group" aria-label="Kind of place" id="ph-near-kinds"></div>
+      <p id="ph-near-status" class="hint" aria-live="polite"></p>
+      <ul id="ph-near-list" class="results" aria-label="Nearby places"></ul>
+      <button type="button" id="ph-near-close">Close</button>
+    </dialog>
 
     <dialog id="menu" aria-labelledby="menu-title">
       <form method="dialog" id="menu-form">

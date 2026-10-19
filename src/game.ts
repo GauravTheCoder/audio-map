@@ -7,6 +7,7 @@ import { Input, type Command } from './input';
 import { bindingsOf, describeBinding, lookup, type ActionId, type Binding } from './keymap';
 import { MapView } from './mapview';
 import { HIGHWAYS, fetchPlaces, fetchRoads, fetchCountry, fetchNamedAreas, fetchRoadsBox, fetchStopRoutes, reverseGeocode, type NamedArea, type RawPlaces, type RawRoads } from './osm';
+import { downloadGpx, routeToGpx } from './gpx';
 import { crossingLeg, drivesOnLeft, locate, routesText, spotText, stopDetail } from './placeinfo';
 import { fetchTileArea } from './tiles';
 import { Projection, alongLine, bearing as bearingTo, findBend, pointSeg, clockDir, compass8, dist, normDeg, relAngle, sideWord, type LatLon } from './geo';
@@ -20,7 +21,7 @@ import { Speech } from './speech';
 import { addCrossings, maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions, type StreetCrossing } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
-import { conditionsReport } from './weather';
+import { conditionsReport, isDark } from './weather';
 import { departuresReport, transitous } from './transit';
 import { MINOR, TRANSIT, World, type Edge, type GNode, type Junction, type Place, type PlaceGroup, type RoadHit, type Way } from './world';
 
@@ -645,6 +646,7 @@ export class Game {
       this.step(STEP);
       this.acc -= STEP;
     }
+    this.syncEngine();
     this.audio.update(
       {
         speed: this.speed,
@@ -1475,6 +1477,18 @@ export class Game {
     return parts.join('; ');
   }
 
+  private dark = false;
+  private darkCheckedAt = -Infinity;
+
+  /** Daylight is looked up at most every ten minutes, and only once an unlit path is close. */
+  private isDarkNow(): boolean {
+    if (this.clock - this.darkCheckedAt > 600) {
+      this.darkCheckedAt = this.clock;
+      void isDark(this.proj.toLatLon(this.x, this.y)).then((d) => (this.dark = d));
+    }
+    return this.dark;
+  }
+
   /** Crossings and steps just ahead, for walkers and cyclists. */
   private checkHazards() {
     if (!this.settings.announceHazards || this.speed < 0.3 || (this.vehicle.id !== 'walker' && this.vehicle.id !== 'bicycle')) return;
@@ -1482,6 +1496,7 @@ export class Game {
     for (const { hazard: h, d } of this.world!.hazardsNear(this.x, this.y, reach)) {
       if (Math.abs(relAngle(this.heading, bearingTo(this.x, this.y, h.x, h.y))) > 35) continue;
       if (h.text === 'Steps' && this.road?.type === 'steps') continue;
+      if (h.text === 'Unlit path' && !this.isDarkNow()) continue;
       const key = `${h.text}|${Math.round(h.x)},${Math.round(h.y)}`;
       if (this.clock - (this.announcedHazards.get(key) ?? -1e9) < 120) continue;
       this.announcedHazards.set(key, this.clock);
@@ -1511,7 +1526,43 @@ export class Game {
       const spot = this.placeDetail(place).short;
       this.speech.say(placeSpeech(place.name, spot ? `${place.category}, ${spot}` : place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
       this.lastPlaceSpoken = this.clock;
-      break;
+      return;
+    }
+    this.checkBuildings();
+  }
+
+  /**
+   * Walking: named buildings and grounds within 20 m (from OpenStreetMap; the tiles carry no
+   * names), once each. Not the one you are in, and not one a nearby place of the same name covers.
+   */
+  private checkBuildings() {
+    if (this.vehicle.id !== 'walker') return;
+    this.loadNamed();
+    const reach = 20;
+    for (const a of this.named?.items ?? []) {
+      if (this.x < a.minX - reach || this.x > a.maxX + reach || this.y < a.minY - reach || this.y > a.maxY + reach) continue;
+      const key = `area:${a.name}`;
+      if (this.clock - (this.announcedPlaces.get(key) ?? -1e9) < 300) continue;
+      if (inRings([a.ring], this.x, this.y)) continue; // inside it
+      // the nearest point of its outline
+      let best: { d: number; x: number; y: number } | null = null;
+      for (let i = 0, j = a.ring.length - 1; i < a.ring.length; j = i++) {
+        const h = pointSeg(this.x, this.y, a.ring[j].x, a.ring[j].y, a.ring[i].x, a.ring[i].y);
+        if (!best || h.dist < best.d) best = { d: h.dist, x: h.px, y: h.py };
+      }
+      if (!best || best.d > reach) continue;
+      const kind = a.building ? 'building' : a.kind ?? 'grounds';
+      const place = { group: 'other', category: kind } as Place;
+      if (!placeWanted(this.settings, this.vehicle.id, place)) return;
+      if (this.world!.placesNear(best.x, best.y, 40).some((n) => n.place.name === a.name)) continue;
+      const rel = relAngle(this.heading, bearingTo(this.x, this.y, best.x, best.y));
+      if (Math.abs(rel) > 120 && best.d > 5) continue; // already passed it
+      this.announcedPlaces.set(key, this.clock);
+      const far = best.d / reach;
+      this.audio.placeCue('other', rel, (0.1 + 0.2 * (1 - far)) * cueLevelScale(this.speed, this.speaking), undefined, far);
+      this.speech.say(placeSpeech(a.name, kind, sideWord(rel), best.d > 15 ? fmtDistance(best.d, this.settings.units) : '', this.speed), 'low');
+      this.lastPlaceSpoken = this.clock;
+      return;
     }
   }
 
@@ -2222,6 +2273,10 @@ export class Game {
         return this.onOsmNote?.(this.proj.toLatLon(this.x, this.y));
       case 'share':
         return void this.shareLink();
+      case 'exportRoute':
+        return this.exportRoute();
+      case 'saveOffline':
+        return void this.saveOffline();
       case 'tripSummary':
         return this.tripSummary();
       case 'whereAmI':
@@ -2234,6 +2289,8 @@ export class Game {
         return this.nearestAccess();
       case 'departures':
         return this.departures();
+      case 'facilities':
+        return this.facilities();
       case 'saveFavorite':
         return this.saveFavorite();
       case 'align':
@@ -2342,7 +2399,7 @@ export class Game {
         'Control left or right turns onto the next road; at a roundabout it turns you in, and takes the exit you are at. R aligns with the road and says how much it bends. ' +
         'H heading, S speed, L location, Shift L live GPS: your real position and compass move you, N distance to the next intersection, Shift N the one behind you; press either twice to move there, stopping at bends too. Period and comma step forward and back through intersections ahead, W what is around, Shift W weather and daylight, Space sonar sweep. ' +
         'F3 grid mode: arrows step north, south, west and east with a sound for the ground, minus and equals change the step, Space says where you are. ' +
-        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
+        'Control J jumps to a place. Shift Q saves this trip as a named route, Q lists saved routes. ' + `${this.keyText('navigate')} searches for a destination. ` + 'D says the distance to go, D twice switches walking routes between shortest and streets only, ' + `${this.keyText('turnByTurn')} toggles turn by turn directions,` + ' I says the next instruction, I twice the next three, B toggles the beacon sound, Shift B the intersection beeps. Tab cycles nearby places, Enter sets one as destination, C shows only one kind of place in W, Space and Tab. V leaves a spoken note here, Shift V deletes it, Control V reports a wrong or missing road or place to OpenStreetMap. Z copies a link to this spot and route, Shift Z saves the route as a GPX file, Shift S saves the map here for offline use. U says how the trip went. E says where you are with the nearest landmark and stop. O previews the whole route. X sets the nearest bus stop or station as destination, again for the next. Shift X says the nearest entrances, platforms and lifts, Shift O the nearest toilets, bench, drinking water, shelter, post box and cash machine. Shift T reads the next departures when you stand at a stop, using the open Transitous feed, which covers much of Europe, North America and Australia. G destination info, Backspace clears it. Y saves the destination or where you are; Control D lists saved places. Control Shift P opens the command palette: type to find any action. ' +
         '1 to 4 change vehicle. Control comma opens settings. A toggles road assist. Shift P cycles sound profiles. Sound themes are chosen in settings or from the command palette. P toggles place announcements. Left and right bracket review messages. Control stops speech. ' +
         'Shift H plays a headphone check: a tone left, right, then ahead. Page up and down change volume. F searches for a location. Escape opens the menu.',
       'high',
@@ -2595,7 +2652,7 @@ export class Game {
     this.live = live;
     const gridOff = !!this.grid;
     this.exitGrid();
-    this.speech.say(`${gridOff ? 'Grid mode off. ' : ''}Live GPS on. Waiting for your location. The keyboard works until it arrives.`, 'high');
+    this.speech.say(`${gridOff ? 'Grid mode off. ' : ''}Live GPS on. Waiting for your location.${this.touch ? '' : ' The keyboard works until it arrives.'}`, 'high');
     await live.start();
   }
 
@@ -2800,6 +2857,17 @@ export class Game {
     this.setTarget(this.targetFor(p));
   }
 
+  /** Shift O: the nearest toilets, bench, drinking water, shelter, post box and cash machine, each with direction and distance. */
+  private facilities() {
+    const nearest = new Map<string, { d: number; x: number; y: number }>();
+    for (const f of this.world!.facilities) {
+      const d = dist(this.x, this.y, f.x, f.y);
+      if (d < (nearest.get(f.kind)?.d ?? Infinity)) nearest.set(f.kind, { d, x: f.x, y: f.y });
+    }
+    const list = [...nearest].sort((a, b) => a[1].d - b[1].d).map(([kind, f]) => `${cap(kind)}, ${fmtDistance(f.d, this.settings.units)} ${this.dirTo(f.x, f.y)}`);
+    this.speech.say(list.length ? `${list.join('. ')}.` : 'No toilets, benches or other facilities on the loaded map.', 'high');
+  }
+
   /** Shift X: say the nearest entrances, platforms and lifts with direction and distance. */
   private nearestAccess() {
     const u = this.settings.units;
@@ -2967,14 +3035,22 @@ export class Game {
     // face north and stay so: the beacon and clock directions then read as a north-up map
     this.place(this.x, this.y, 0, null);
     this.grid = { key: null, req: 0 };
-    this.audio.setEngine(false); // the vehicle is parked while you step about
+    this.syncEngine(); // the vehicle is parked while you step about
     void this.gridLook(true, `Grid mode, up is north. Arrows move ${this.gridStepText()}; minus and equals change the step. Space says where you are. F3 leaves.`);
+  }
+
+  /**
+   * The vehicle's own sound (footsteps, engine, rotor) plays only while the keyboard moves you: not
+   * in grid mode, where the vehicle is parked, nor with live GPS, where you really are walking or driving.
+   */
+  private syncEngine() {
+    this.audio.setEngine(!this.grid && !(this.live && this.liveFix));
   }
 
   /** Leave grid mode (if on) and start the vehicle's sound again. */
   exitGrid() {
     this.grid = null;
-    this.audio.setEngine(true);
+    this.syncEngine();
   }
 
   /** Keys that work differently in grid mode; returns false for the rest. */
@@ -3154,6 +3230,31 @@ export class Game {
     }
     if (best) return { dir: Math.round(normDeg(best.dir)), street: best.street };
     return { dir: (Math.round(normDeg(heading) / 45) % 8) * 45 };
+  }
+
+  /**
+   * Places within `r` metres, nearest first, for the phone's Nearby list: name, kind, how far and
+   * which way ("ahead left"). `group` limits them to one kind.
+   */
+  nearbyList(group: PlaceGroup | null, r = 500, max = 20): { id: string; text: string }[] {
+    if (!this.world) return [];
+    const u = this.settings.units;
+    return this.world
+      .placesNear(this.x, this.y, r)
+      .filter(({ place }) => !group || place.group === group)
+      .slice(0, max)
+      .map(({ place, d }) => ({
+        id: place.id,
+        text: `${this.placeText(place)}, ${fmtDistance(d, u)}, ${sideWord(relAngle(this.heading, bearingTo(this.x, this.y, place.x, place.y)))}`,
+      }));
+  }
+
+  /** Make a loaded place the destination: its main door, a station's nearest entrance, or the place. */
+  pickPlace(id: string): boolean {
+    const p = this.world?.places.find((q) => q.id === id);
+    if (!p) return false;
+    this.setTarget(this.targetFor(p));
+    return true;
   }
 
   /** Start live GPS from a tap (iOS asks for the compass only then); nothing if it is on. */
@@ -3465,6 +3566,29 @@ export class Game {
     } catch {
       this.speech.say('Could not copy the link. Clipboard access was refused.', 'high');
     }
+  }
+
+  /** Shift S: fetch the map around here (and the destination) now, so it loads without a connection later. */
+  private async saveOffline() {
+    const spots = [this.proj.toLatLon(this.x, this.y)];
+    if (this.dest) spots.push(this.proj.toLatLon(this.dest.x, this.dest.y));
+    const radius = this.vehicle.loadRadius;
+    this.speech.say('Saving this area for offline use.', 'high');
+    const none = new AbortController().signal;
+    try {
+      for (const c of spots) await Promise.all([fetchTileArea(c, radius, none), fetchRoads(c, radius, none), fetchPlaces(c, radius, none)]);
+      this.speech.say(`Saved the map around ${spots.length > 1 ? 'here and the destination' : 'here'} for offline use.`, 'high');
+    } catch {
+      this.speech.say('Could not save the area. Check your connection.', 'high');
+    }
+  }
+
+  /** Shift Z: the planned route as a GPX file, so a helper or another app can follow it. */
+  private exportRoute() {
+    const r = this.route;
+    if (!this.dest || !r) return this.speech.say('No route to save. Set a destination first.', 'high');
+    downloadGpx(this.dest.name, routeToGpx(this.dest.name, r.points.map((p) => this.proj.toLatLon(p.x, p.y))));
+    this.speech.say(`Route to ${this.dest.name} saved as a GPX file${r.partial ? ', as far as the map has loaded' : ''}.`, 'high');
   }
 
   /** U: how the trip to the destination is going, or how the last one went. */
