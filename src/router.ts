@@ -16,7 +16,9 @@ export interface Maneuver {
   d: number;
   /** turn angle, degrees: negative left, positive right */
   rel: number;
-  kind: 'continue' | 'bear' | 'turn' | 'sharp' | 'u-turn' | 'roundabout' | 'arrive';
+  kind: 'continue' | 'bear' | 'turn' | 'sharp' | 'u-turn' | 'roundabout' | 'arrive' | 'cross';
+  /** for a crossing: how it is controlled, e.g. "at the signals, audible signal" */
+  via?: string;
   onto: string;
   ontoNamed: boolean;
   /** roundabout exit number */
@@ -230,6 +232,7 @@ function maneuvers(path: GNode[], points: RoutePoint[], ways: (Way | null)[], o:
 /** Spoken form: "turn left onto Oak Street", "bear right onto the footpath", "make a U-turn". */
 export function maneuverText(m: Maneuver, destName: string): string {
   const side = m.rel < 0 ? 'left' : 'right';
+  if (m.kind === 'cross') return `cross ${m.onto}${m.via ? `, ${m.via}` : ''}`;
   if (m.kind === 'arrive') return `arrive at ${destName}${Math.abs(m.rel) >= 25 ? `, on your ${side}` : ''}`;
   if (m.kind === 'u-turn') return 'make a U-turn';
   const onto = m.ontoNamed ? m.onto : `the ${m.onto}`;
@@ -241,6 +244,34 @@ export function maneuverText(m: Maneuver, destName: string): string {
   if (m.kind === 'continue') return `continue onto ${onto}`;
   const verb = m.kind === 'bear' ? 'bear' : m.kind === 'sharp' ? 'turn sharp' : 'turn';
   return `${verb} ${side} onto ${onto}`;
+}
+
+/** A place where a walking route crosses a named street, at distance d along it. */
+export interface StreetCrossing {
+  d: number;
+  x: number;
+  y: number;
+  name: string;
+  via?: string;
+}
+
+/**
+ * Put "cross <street>" steps into a walking route where it crosses a street, so a turn on the far
+ * side is announced only once across ("cross Mathews Avenue, then turn right"), not as a bare
+ * "turn right" from the near side. Routers fold a straight-on crosswalk into the walk along the
+ * street, and give a crosswalk taken with a turn as "turn onto the footpath": that unnamed step
+ * just before a crossing is quietened in favour of it. Replaces crossings added before.
+ */
+export function addCrossings(r: Route, crossings: StreetCrossing[]) {
+  const kept = r.maneuvers.filter((m) => m.kind !== 'cross');
+  for (const c of crossings) {
+    for (const m of kept) {
+      if (m.kind === 'arrive' || m.kind === 'roundabout' || m.ontoNamed) continue;
+      if (m.d <= c.d && c.d - m.d <= 15) m.trivial = true; // the step onto the crosswalk itself
+    }
+    kept.push({ x: c.x, y: c.y, d: c.d, rel: 0, kind: 'cross', onto: c.name, ontoNamed: true, via: c.via, trivial: false });
+  }
+  r.maneuvers = kept.sort((a, b) => a.d - b.d);
 }
 
 export function ordinal(n: number): string {

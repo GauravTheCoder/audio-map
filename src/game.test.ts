@@ -351,7 +351,28 @@ describe('turn-by-turn', () => {
     const { g, said } = route({ name: 'Far End', x: 0, y: 380 });
     expect(g.route).not.toBeNull();
     expect(g.route.length).toBeGreaterThan(300);
-    expect(said.at(-1)).toMatch(/^Route .*Far End/);
+    // straight along Oak Street through the Elm Street intersection: crossing Elm comes first
+    expect(said.at(-1)).toMatch(/^Route .*In 150 metres, cross Elm Street/);
+  });
+
+  it('says a crossing on the approach with what follows, and the signals there', () => {
+    const { g, said } = route({ name: 'Far End', x: 0, y: 380 });
+    g.world.addPlaces({ signals: new Set(), places: [], crossings: [{ ...ll(0, 205), text: 'Crossing with signals', extras: ['audible signal'] }] });
+    g.markCrossings();
+    const cross = g.route.maneuvers.find((m: { kind: string }) => m.kind === 'cross');
+    expect(cross).toMatchObject({ onto: 'Elm Street', via: 'at the signals, audible signal' });
+    g.y = cross.y - 24; // walking north up Oak Street toward Elm
+    g.updateRoute();
+    expect(said.at(-1)).toBe('In 25 metres, cross Elm Street, at the signals, audible signal.');
+    const n = said.length;
+    g.y = cross.y - 10; // closer: not said again
+    g.updateRoute();
+    expect(said.length).toBe(n);
+  });
+
+  it('does not count turning onto a street as crossing it', () => {
+    const { g } = route({ name: 'East End', x: 190, y: 200 });
+    expect(g.route.maneuvers.some((m: { kind: string }) => m.kind === 'cross')).toBe(false);
   });
 
   it('announces a right turn onto Elm Street', () => {

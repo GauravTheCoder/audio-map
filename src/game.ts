@@ -17,7 +17,7 @@ import { fmtDistance, fmtSpeed, fmtSpeedShort, saveSettings, type Settings, type
 import type { SoundTheme } from './audio/themes';
 import { extrasWanted, junctionQuiet, nextProfile, placeTier, placeWanted, PROFILE_TEXT } from './profiles';
 import { Speech } from './speech';
-import { maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions } from './router';
+import { addCrossings, maneuverText, ordinal, planRoute, pointAlong, type Maneuver, type Route, type RouteOptions, type StreetCrossing } from './router';
 import { fetchOnlineRoute, hasOnlineRouting } from './onlineRouter';
 import { VEHICLES, roadHalfWidth, type VehicleProfile } from './vehicles';
 import { conditionsReport } from './weather';
@@ -549,6 +549,7 @@ export class Game {
       this.inJunction = seed ? new Set(next.junction(seed, this.filter, this.junctionRadius).nodes.map((m) => m.id)) : null;
     }
     this.world = next;
+    this.markCrossings(); // streets newly loaded along the route may be crossed
     this.ring = null; // picked up again from the new map, if we are in one
     this.ahead = null;
     this.stepCursor = null;
@@ -1783,6 +1784,7 @@ export class Game {
     this.spokenSteps.clear();
     this.offRouteSince = -1;
     this.map.setRoute(r.points.map((p) => this.proj.toLatLon(p.x, p.y)));
+    this.markCrossings();
     if (!announce) return;
     const u = this.settings.units;
     const first = r.maneuvers[this.nextRealIndex(0)];
@@ -1874,6 +1876,51 @@ export class Game {
     } else this.speech.say(what, 'high');
   }
 
+  /**
+   * Walking: add "cross <street>" steps where the route crosses a named street (see addCrossings),
+   * with how the crossing is controlled. Run again as more map loads, since a crossing can only be
+   * found where the streets are loaded.
+   */
+  private markCrossings() {
+    const r = this.route;
+    if (!r || this.vehicle.id !== 'walker') return;
+    const found: StreetCrossing[] = [];
+    const check = (a: { x: number; y: number; d: number }, b: { x: number; y: number; d: number }) => {
+      for (const w of [this.world, this.routeWorld?.world]) {
+        for (const h of w?.streetsCrossed(a.x, a.y, b.x, b.y) ?? []) {
+          const d = a.d + h.t * (b.d - a.d);
+          // both halves of a divided road, or the same street from two loaded maps: one crossing
+          if (found.some((c) => c.name === h.name && Math.abs(c.d - d) < 30)) continue;
+          found.push({ d, x: h.x, y: h.y, name: h.name, via: this.crossingVia(h.x, h.y) });
+        }
+      }
+    };
+    const pts = r.points;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      check(pts[i], pts[i + 1]);
+      // a bend right on a street's centre line (routes along centre lines, straight through an
+      // intersection): from just before it to just after it crosses the street; turning onto it does not
+      if (i === 0 || i + 1 >= pts.length) continue;
+      const p = pts[i];
+      const near = (q: { x: number; y: number; d: number }) => {
+        const k = Math.min(1, 2 / Math.max(0.01, Math.abs(q.d - p.d)));
+        return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, d: p.d + (q.d - p.d) * k };
+      };
+      check(near(pts[i - 1]), near(pts[i + 1]));
+    }
+    found.sort((a, b) => a.d - b.d);
+    addCrossings(r, found);
+    this.nextMan = r.maneuvers.findIndex((m) => m.d >= this.routeProg - 3);
+    if (this.nextMan < 0) this.nextMan = r.maneuvers.length;
+  }
+
+  /** "at the signals, audible signal" from a crossing mapped within 15 m. */
+  private crossingVia(x: number, y: number): string | undefined {
+    const h = this.world?.hazardsNear(x, y, 15).find((n) => n.hazard.text === 'Crossing with signals' || n.hazard.text === 'Pedestrian crossing')?.hazard;
+    if (!h) return undefined;
+    return [h.text === 'Crossing with signals' ? 'at the signals' : 'at the crossing', ...(h.extras ?? [])].join(', ');
+  }
+
   private clearRoute() {
     this.route = null;
     this.map.setRoute(null);
@@ -1916,7 +1963,7 @@ export class Game {
 
   /** Is this turn at an intersection, where arriving in it gives the "turn here" cue? */
   private turnAtJunction(m: Maneuver): boolean {
-    if (m.kind === 'arrive' || m.kind === 'roundabout') return false;
+    if (m.kind === 'arrive' || m.kind === 'roundabout' || m.kind === 'cross') return false;
     const w = this.world!;
     return w.nodesNear(m.x, m.y, 10).some((n) => w.isIntersection(n, this.filter));
   }
@@ -2045,13 +2092,14 @@ export class Game {
       // a turn at an intersection is called when you are in that intersection (checkInJunction),
       // not by distance, which could fall on a side street just before it
       if (k === 2 && atJunction) continue;
-      if (k < 2 && d <= th[k + 1] * 1.4) continue; // the closer reminder is coming up anyway
+      // a crossing is said once, on the approach, with what follows it: one per street crossed is plenty
+      if (m.kind === 'cross' ? k !== 1 : k < 2 && d <= th[k + 1] * 1.4) continue; // else the closer reminder is coming up anyway
       for (let j = 0; j <= k; j++) this.spokenSteps.add(j); // never say an earlier reminder after a later one
       const text = this.stepWithThen(m);
       if (k < 2) {
         this.speech.say(`In ${fmtDistance(d, u)}, ${this.whichIntersection(m)}${text}.`, k === 0 ? 'normal' : 'high');
       } else if (m.kind !== 'arrive') {
-        if (m.kind !== 'roundabout') this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
+        if (m.kind !== 'roundabout' && m.kind !== 'cross') this.audio.turnCue(m.rel); // its overall direction isn't the way to turn in
         this.speech.say(`${cap(text)}.`, 'high');
       }
       break;
