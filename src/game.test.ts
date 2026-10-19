@@ -1061,6 +1061,61 @@ describe('phone screen', () => {
   });
 });
 
+describe('named buildings while walking', () => {
+  const poly = (name: string, x0: number, y0: number, x1: number, y1: number, building = true) => ({
+    name,
+    building,
+    ring: [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 },
+      { x: x1, y: y1 },
+      { x: x0, y: y1 },
+    ],
+    minX: x0,
+    minY: y0,
+    maxX: x1,
+    maxY: y1,
+    size: (x1 - x0) * (y1 - y0),
+  });
+  function walking(items: ReturnType<typeof poly>[]) {
+    const h = setup(); // walker on Oak Street at (0, 50), facing north
+    h.g.named = { at: { x: 0, y: 50 }, items };
+    h.g.speed = 1.2;
+    h.g.clock = 100; // well after any earlier announcement
+    return h;
+  }
+
+  it('says a named building within 20 metres, on its side, once', () => {
+    const { said, g } = walking([poly('Beryl House', 5, 40, 30, 70)]);
+    g.checkPlaces();
+    expect(said.at(-1)).toBe('Beryl House, building, on your right');
+    g.clock += 10;
+    g.checkPlaces();
+    expect(said.filter((t) => t.startsWith('Beryl House'))).toHaveLength(1);
+  });
+
+  it('leaves out buildings further than 20 metres, the one you are in, and when driving', () => {
+    expect(walking([poly('Far Hall', 40, 40, 60, 70)]).said).toEqual([]);
+    const far = walking([poly('Far Hall', 40, 40, 60, 70)]);
+    far.g.checkPlaces();
+    expect(far.said).toEqual([]);
+    const inside = walking([poly('Mall', -20, 30, 20, 80)]);
+    inside.g.checkPlaces();
+    expect(inside.said).toEqual([]);
+    const shop = walking([poly('Blue Cafe', 5, 85, 30, 115)]); // the cafe at (20, 100) is announced as a place instead
+    shop.g.announcedPlaces.set('n1', shop.g.clock);
+    shop.g.y = 95;
+    shop.g.checkPlaces();
+    expect(shop.said.join(' ')).not.toMatch(/Blue Cafe, building/);
+    const car = walking([poly('Beryl House', 5, 40, 30, 70)]);
+    car.game.run('3');
+    car.g.speed = 1.2;
+    car.said.length = 0;
+    car.g.checkPlaces();
+    expect(car.said.join(' ')).not.toMatch(/Beryl House/);
+  });
+});
+
 describe('live GPS sound', () => {
   it('silences the footsteps while live GPS moves you, and brings them back without it', () => {
     const { g } = setup();
