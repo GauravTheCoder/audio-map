@@ -1,9 +1,9 @@
 // Watches the rear camera for a lit red or orange pedestrian signal and beeps slowly for it.
-// It never reports Walk: a green blob is as likely a car light or a sign as a pedestrian signal, and a white (US)
+// It reports 'unsure' when red and green both show. It never reports Walk: a green blob is as likely a car light or a sign as a pedestrian signal, and a white (US)
 // walk figure looks like any white glare. A false Walk is the one mistake this must not make.
 // ponytail: counts saturated bright red pixels only. Add a symbol detector (e.g. a small TensorFlow.js model) before reporting Walk.
 
-export type SignalState = 'dontWalk' | 'none';
+export type SignalState = 'dontWalk' | 'unsure' | 'none';
 
 export interface SignalOptions {
   /** the video element that shows the camera; it must be in the page, and may be hidden from view */
@@ -34,16 +34,27 @@ function hsv(r: number, g: number, b: number): [number, number, number] {
   return [h * 60, max ? d / max : 0, max / 255];
 }
 
-/** Classify RGBA pixels: lit red or orange covering enough of the frame is a Don't Walk signal. */
-export function classify(rgba: Uint8ClampedArray, minFraction = 0.004): SignalState {
+/**
+ * Classify RGBA pixels of a frame `width` pixels wide. Only the middle of the frame counts: the signal being
+ * crossed is aimed at, so side lights are not ours. Lit red or orange there is Don't Walk; if lit green shows
+ * too, it is a traffic scene and which light is ours cannot be told, so the answer is 'unsure'.
+ */
+export function classify(rgba: Uint8ClampedArray, width: number, minFraction = 0.004): SignalState {
+  const rows = rgba.length / 4 / width;
+  let green = 0;
   let red = 0;
   for (let i = 0; i < rgba.length; i += 4) {
+    const x = (i / 4) % width;
+    const y = Math.floor(i / 4 / width);
+    if (x < width * 0.25 || x >= width * 0.75 || y < rows * 0.2 || y >= rows * 0.8) continue;
     const [h, s, v] = hsv(rgba[i], rgba[i + 1], rgba[i + 2]);
     if (s < 0.6 || v < 0.7) continue; // a lit lamp is bright and saturated; paint and foliage are not
-    if (h <= 40 || h >= 340) red++; // the US "hand" is orange-red
+    if (h >= 90 && h <= 175) green++;
+    else if (h <= 40 || h >= 340) red++; // the US "hand" is orange-red
   }
   const need = (rgba.length / 4) * minFraction;
-  return red < need ? 'none' : 'dontWalk';
+  if (red < need) return 'none';
+  return green >= need ? 'unsure' : 'dontWalk';
 }
 
 export class SignalWatcher {
@@ -99,7 +110,7 @@ export class SignalWatcher {
     let seen: SignalState = 'none';
     if (this.o.gate?.() !== false) {
       ctx.drawImage(video, 0, 0, SIZE.w, SIZE.h);
-      seen = classify(ctx.getImageData(0, 0, SIZE.w, SIZE.h).data, this.o.minFraction);
+      seen = classify(ctx.getImageData(0, 0, SIZE.w, SIZE.h).data, SIZE.w, this.o.minFraction);
     }
     // a signal needs a few frames in a row to appear, and a longer gap to go away: lamps flicker and cars pass
     const need = seen === 'none' ? LOST_FRAMES : this.o.confirmFrames;
@@ -113,7 +124,7 @@ export class SignalWatcher {
     this.state = next;
     clearInterval(this.alert);
     this.alert = undefined;
-    if (next !== 'none') {
+    if (next === 'dontWalk') {
       this.beep(400);
       this.alert = setInterval(() => this.beep(400), this.o.dontWalkBeepMs);
     }
