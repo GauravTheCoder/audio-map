@@ -1510,7 +1510,43 @@ export class Game {
       const spot = this.placeDetail(place).short;
       this.speech.say(placeSpeech(place.name, spot ? `${place.category}, ${spot}` : place.category, sideWord(rel), d > 15 ? fmtDistance(d, this.settings.units) : '', this.speed), 'low');
       this.lastPlaceSpoken = this.clock;
-      break;
+      return;
+    }
+    this.checkBuildings();
+  }
+
+  /**
+   * Walking: named buildings and grounds within 20 m (from OpenStreetMap; the tiles carry no
+   * names), once each. Not the one you are in, and not one a nearby place of the same name covers.
+   */
+  private checkBuildings() {
+    if (this.vehicle.id !== 'walker') return;
+    this.loadNamed();
+    const reach = 20;
+    for (const a of this.named?.items ?? []) {
+      if (this.x < a.minX - reach || this.x > a.maxX + reach || this.y < a.minY - reach || this.y > a.maxY + reach) continue;
+      const key = `area:${a.name}`;
+      if (this.clock - (this.announcedPlaces.get(key) ?? -1e9) < 300) continue;
+      if (inRings([a.ring], this.x, this.y)) continue; // inside it
+      // the nearest point of its outline
+      let best: { d: number; x: number; y: number } | null = null;
+      for (let i = 0, j = a.ring.length - 1; i < a.ring.length; j = i++) {
+        const h = pointSeg(this.x, this.y, a.ring[j].x, a.ring[j].y, a.ring[i].x, a.ring[i].y);
+        if (!best || h.dist < best.d) best = { d: h.dist, x: h.px, y: h.py };
+      }
+      if (!best || best.d > reach) continue;
+      const kind = a.building ? 'building' : a.kind ?? 'grounds';
+      const place = { group: 'other', category: kind } as Place;
+      if (!placeWanted(this.settings, this.vehicle.id, place)) return;
+      if (this.world!.placesNear(best.x, best.y, 40).some((n) => n.place.name === a.name)) continue;
+      const rel = relAngle(this.heading, bearingTo(this.x, this.y, best.x, best.y));
+      if (Math.abs(rel) > 120 && best.d > 5) continue; // already passed it
+      this.announcedPlaces.set(key, this.clock);
+      const far = best.d / reach;
+      this.audio.placeCue('other', rel, (0.1 + 0.2 * (1 - far)) * cueLevelScale(this.speed, this.speaking), undefined, far);
+      this.speech.say(placeSpeech(a.name, kind, sideWord(rel), best.d > 15 ? fmtDistance(best.d, this.settings.units) : '', this.speed), 'low');
+      this.lastPlaceSpoken = this.clock;
+      return;
     }
   }
 
