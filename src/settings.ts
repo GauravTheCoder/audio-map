@@ -16,11 +16,15 @@ export interface Settings {
   vehicle: VehicleId;
   speechMode: SpeechMode;
   voiceRate: number;
+  /** how far places are announced and listed, as a multiple of the vehicle's usual reach */
+  radiusScale: number;
   units: Units;
   /** the player picked the units; until then they follow the country (imperial in the US) */
   unitsChosen: boolean;
   announcePlaces: boolean;
   announceHazards: boolean;
+  /** shake the phone to hear where you are */
+  shake: boolean;
   /** vibrate for turns, hazards, wrong way and arrival (phones that support it) */
   haptics: boolean;
   announceStreets: boolean;
@@ -51,10 +55,12 @@ const DEFAULTS: Settings = {
   vehicle: 'walker',
   speechMode: 'screenreader',
   voiceRate: 1.3,
+  radiusScale: 1,
   units: 'metric',
   unitsChosen: false,
   announcePlaces: true,
   announceHazards: true,
+  shake: false,
   haptics: true,
   announceStreets: true,
   announceHeadingAfterTurn: true,

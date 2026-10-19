@@ -1356,3 +1356,108 @@ describe('corridorSpots', () => {
     expect(corridorSpots([], 300, 12)).toEqual([]);
   });
 });
+
+describe('look around', () => {
+  it('says the places and the intersection in the direction pointed', () => {
+    const { g } = setup();
+    g.y = 60;
+    expect(g.lookText(0)).toBe('North: Blue Cafe, cafe, 45 metres. Oak Street and Elm Street, 140 metres.');
+    expect(g.lookText(180)).toBe('South: nothing mapped within 150 metres.');
+  });
+
+  it('speaks once the phone is held still on a new direction, and not again for the same one', () => {
+    const { game, said, g } = setup();
+    game.run('E', { shift: true });
+    expect(said.at(-1)).toMatch(/^Look around on/);
+    g.heading = 0;
+    g.clock = 10;
+    g.checkLookAround(); // starts holding
+    g.clock = 10.5;
+    g.checkLookAround();
+    expect(said).toHaveLength(1);
+    g.clock = 11.2;
+    g.checkLookAround();
+    expect(said).toHaveLength(2);
+    expect(said.at(-1)).toMatch(/^North:/);
+    g.clock = 13;
+    g.checkLookAround();
+    expect(said).toHaveLength(2);
+    g.heading = 90;
+    g.clock = 14;
+    g.checkLookAround();
+    g.clock = 15.2;
+    g.checkLookAround();
+    expect(said.at(-1)).toMatch(/^East:/);
+    game.run('E', { shift: true });
+    expect(said.at(-1)).toBe('Look around off.');
+  });
+
+  it('Shift I says what lies the way you are heading, without the mode on', () => {
+    const { game, said, g } = setup();
+    g.y = 60;
+    game.run('I', { shift: true });
+    expect(said.at(-1)).toMatch(/^North: Blue Cafe/);
+    g.heading = 180;
+    game.run('I', { shift: true });
+    expect(said.at(-1)).toBe('South: nothing mapped within 150 metres.');
+  });
+});
+
+describe('announce radius', () => {
+  it('steps the walker reach farther and nearer, and stops at the ends', () => {
+    const { game, said, g } = setup();
+    game.run(']', { ctrl: true });
+    expect(g.settings.radiusScale).toBe(2);
+    expect(said.at(-1)).toBe('Hearing places within 300 metres.');
+    game.run(']', { ctrl: true });
+    game.run(']', { ctrl: true });
+    expect(said.at(-1)).toBe('Already at the farthest.');
+    for (let i = 0; i < 4; i++) game.run('[', { ctrl: true });
+    expect(g.settings.radiusScale).toBe(0.5);
+    expect(said.at(-1)).toBe('Already at the nearest.');
+  });
+
+  it('narrows what W lists', () => {
+    const { game, said, g } = setup();
+    g.settings.radiusScale = 0.5; // 75 m reach (said as 80): the cafe at about 51 m is in
+    game.run('w');
+    expect(said.at(-1)).toMatch(/Blue Cafe/);
+    g.y = 400;
+    game.run('w');
+    expect(said.at(-1)).toBe('No places within 80 metres.');
+  });
+});
+
+describe('open in maps app', () => {
+  it('hands the destination to the maps app and turns its own directions off', () => {
+    const open = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent: () => true, open });
+    const { game, said, g } = setup();
+    game.run('M', { shift: true });
+    expect(said.at(-1)).toMatch(/^No destination/);
+    g.dest = { name: 'Elm End', x: 150, y: 200 };
+    g.settings.turnByTurn = true;
+    game.run('M', { shift: true });
+    expect(open).toHaveBeenCalledOnce();
+    expect(open.mock.calls[0][0]).toMatch(/^https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=51\.\d+,-?0\.\d+&travelmode=walking$/);
+    expect(g.settings.turnByTurn).toBe(false);
+    expect(said.at(-1)).toMatch(/^Opening Elm End in your maps app\. Turn by turn here is off/);
+    vi.stubGlobal('window', { dispatchEvent: () => true });
+  });
+});
+
+describe('hearing farther stays inside the loaded map', () => {
+  it('shrinks the reach as you drift from where the map was loaded, never below the usual', () => {
+    const { g } = setup(); // walker
+    const v = g.vehicle;
+    g.settings.radiusScale = 3;
+    g.loadCenter = { x: 0, y: 0 };
+    g.x = 0;
+    g.y = 0;
+    expect(g.reach(v.scanRadius)).toBe(Math.min(v.scanRadius * 3, v.loadRadius * 0.9));
+    g.y = v.loadRadius * 0.5; // drifted north, not yet far enough for a new load
+    expect(g.reach(v.scanRadius)).toBeCloseTo(Math.max(v.scanRadius, v.loadRadius * 0.4));
+    g.y = v.loadRadius * 0.85; // right at the edge
+    expect(g.reach(v.scanRadius)).toBe(v.scanRadius);
+  });
+});
