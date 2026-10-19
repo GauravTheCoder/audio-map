@@ -475,6 +475,14 @@ dialog#nav label {
 #ph-grid .cell[data-sound='commercial'],
 #ph-grid .cell[data-sound='industrial'],
 #ph-grid .cell[data-sound='civic'] { background: #8a5fb8; color: #ffffff; }
+/* map hidden: the directions get the room */
+#phone.no-map .ph-dirs {
+  min-height: 40vh;
+  font-size: 1.6rem;
+}
+#ph-grid[hidden] {
+  display: none;
+}
 .ph-status {
   margin: 0;
   text-align: center;
