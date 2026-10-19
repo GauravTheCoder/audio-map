@@ -48,6 +48,12 @@ describe('crossingExtras', () => {
     expect(crossingExtras({ crossing: 'island', tactile_paving: 'yes' })).toEqual(['island in the middle', 'tactile paving']);
     expect(crossingExtras({})).toEqual([]);
   });
+
+  it('reads kerb height, missing tactile paving and countdown timers', () => {
+    expect(crossingExtras({ kerb: 'flush', tactile_paving: 'no' })).toEqual(['no tactile paving', 'flush kerb, no edge to feel']);
+    expect(crossingExtras({ kerb: 'lowered', 'traffic_signals:countdown': 'yes' })).toEqual(['countdown timer', 'lowered kerb']);
+    expect(crossingExtras({ kerb: 'rolled' })).toEqual([]);
+  });
 });
 
 describe('accessKind', () => {
@@ -99,5 +105,25 @@ describe('parseNamedAreas', () => {
       ['Cama Garden', false, 'park'],
       ['Colaba Market', false, undefined],
     ]);
+  });
+});
+
+describe('facilities', () => {
+  it('finds toilets and benches with or without a name, and keeps named ones as places too', () => {
+    const raw = parsePlaces([
+      { type: 'node', id: 1, lat: 1, lon: 1, tags: { amenity: 'bench' } },
+      { type: 'node', id: 2, lat: 2, lon: 2, tags: { amenity: 'toilets', name: 'Park Toilets' } },
+      { type: 'node', id: 3, lat: 3, lon: 3, tags: { amenity: 'cafe' } },
+    ]);
+    expect(raw.facilities).toEqual([{ lat: 1, lon: 1, kind: 'bench' }, { lat: 2, lon: 2, kind: 'toilets' }]);
+    expect(raw.places.map((p) => p.tags.name)).toEqual(['Park Toilets']);
+  });
+});
+
+describe('unlit paths', () => {
+  it('keeps the start of a footway tagged lit=no and ignores paths with no or a yes tag', () => {
+    const way = (id: number, tags: Record<string, string>) => ({ type: 'way' as const, id, tags: { highway: 'footway', ...tags }, geometry: [{ lat: 51, lon: 0 }, { lat: 51.001, lon: 0 }] });
+    const raw = parsePlaces([way(1, { lit: 'no' }), way(2, { lit: 'yes' }), way(3, {})]);
+    expect(raw.unlit).toEqual([{ lat: 51, lon: 0 }]);
   });
 });

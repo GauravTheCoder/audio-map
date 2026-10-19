@@ -18,12 +18,34 @@ const HIGHWAY_SET = new Set(HIGHWAYS.split('|'));
 /** how close (in tile units, ~0.4–0.6 m) a road end must be to another road to count as joined */
 const SNAP = 1.6;
 
+const KEPT = 'audio-map-tiles-v1';
+
+/**
+ * Network first, keeping what arrives; offline, a tile or tile list seen before is served instead.
+ * ponytail: the cache only grows, add an eviction pass if storage becomes a problem.
+ */
+export async function fetchKept(url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    const r = await fetch(url, init);
+    if (r.ok && typeof caches !== 'undefined') {
+      const copy = r.clone();
+      void caches.open(KEPT).then((c) => c.put(url, copy)).catch(() => undefined);
+    }
+    return r;
+  } catch (e) {
+    if (init.signal?.aborted || typeof caches === 'undefined') throw e;
+    const hit = await caches.match(url, { cacheName: KEPT }).catch(() => undefined);
+    if (hit) return hit;
+    throw e;
+  }
+}
+
 let tileUrl: Promise<string> | null = null;
 
 /** The current tile URL template (it changes when the map data is updated). */
 // Shared by every caller, so it must not be tied to one caller's abort signal.
 function template(): Promise<string> {
-  tileUrl ??= fetch(TILEJSON, { signal: AbortSignal.timeout(15_000) })
+  tileUrl ??= fetchKept(TILEJSON, { signal: AbortSignal.timeout(15_000) })
     .then((r) => {
       if (!r.ok) throw new Error(`TileJSON ${r.status}`);
       return r.json();
@@ -52,7 +74,7 @@ export async function fetchTile(tx: number, ty: number, signal?: AbortSignal): P
   const url = await template();
   // tiles past the dateline wrap round to the other side of the map
   const wx = ((tx % 2 ** Z) + 2 ** Z) % 2 ** Z;
-  const r = await fetch(url.replace('{z}', String(Z)).replace('{x}', String(wx)).replace('{y}', String(ty)), { signal });
+  const r = await fetchKept(url.replace('{z}', String(Z)).replace('{x}', String(wx)).replace('{y}', String(ty)), { signal });
   if (!r.ok) throw new Error(`Tile ${tx},${ty}: ${r.status}`);
   return new VectorTile(new PbfReader(new Uint8Array(await r.arrayBuffer())));
 }

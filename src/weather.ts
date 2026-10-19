@@ -45,6 +45,15 @@ async function load(p: LatLon, units: Units): Promise<Forecast> {
   return data;
 }
 
+/** True after sunset and before sunrise; false when the forecast cannot be had, so nothing is claimed in the dark. */
+export async function isDark(p: LatLon): Promise<boolean> {
+  try {
+    return !(await load(p, 'metric')).current.is_day;
+  } catch {
+    return false;
+  }
+}
+
 export async function conditionsReport(p: LatLon, units: Units): Promise<string> {
   let f: Forecast;
   try {
